@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { GuitarSynth } from '../utils/audio';
 import { Play, Music, Volume2, Info } from 'lucide-react';
 import { MelodyNote } from '../types';
+import { isDoubtful } from '../utils/tabImage';
 
 interface RiffPlayerProps {
     title: string;
@@ -120,7 +121,9 @@ const RiffPlayer: React.FC<RiffPlayerProps> =({ title, sequence, tempo = 100, de
                             while (j < sequence.length - 1 && (sequence[j].duration ?? 1.0) === 0) j++;
                             const duration = sequence[j].duration ?? 1.0;
                             
-                            if (note.fret === -1) return null; // Silence
+                            // Silence ; mais une note étouffée lue sur une tablature (X) reste affichée
+                            if (note.fret === -1 && !note.scan) return null;
+                            const doubtful = isDoubtful(note);
 
                             return (
                                 <div 
@@ -136,8 +139,11 @@ const RiffPlayer: React.FC<RiffPlayerProps> =({ title, sequence, tempo = 100, de
                                     {note.lyric && (
                                         <span className={`absolute text-xs whitespace-nowrap ${isPlaying && playheadX + NOTES_OFFSET >= x && playheadX + NOTES_OFFSET < x + duration * beatWidth ? 'text-amber-400 font-bold' : 'text-slate-400'}`} style={{ top: `${160 - y}px` }}>{note.lyric}</span>
                                     )}
-                                    <div className={`w-6 h-6 rounded-md flex items-center justify-center border font-black text-xs ${isPlaying && playheadX + NOTES_OFFSET >= x && playheadX + NOTES_OFFSET < x + duration * beatWidth ? 'bg-amber-500 border-white text-slate-900 scale-125 z-20 shadow-[0_0_15px_#f59e0b]' : 'bg-slate-950 border-slate-700 text-slate-300'}`}>
-                                        {note.fret}
+                                    <div
+                                        title={doubtful ? `Lecture incertaine${note.scan!.alternative !== undefined ? ` : ${note.fret === -1 ? 'X' : note.fret} ou ${note.scan!.alternative === -1 ? 'X' : note.scan!.alternative} ?` : ''}` : undefined}
+                                        className={`w-6 h-6 rounded-md flex items-center justify-center border font-black text-xs ${isPlaying && playheadX + NOTES_OFFSET >= x && playheadX + NOTES_OFFSET < x + duration * beatWidth ? 'bg-amber-500 border-white text-slate-900 scale-125 z-20 shadow-[0_0_15px_#f59e0b]' : doubtful ? 'bg-slate-950 border-dashed border-amber-500 text-amber-300' : 'bg-slate-950 border-slate-700 text-slate-300'}`}>
+                                        {note.fret === -1 ? 'x' : note.fret}
+                                        {doubtful && <span className="absolute -top-2 -right-1 text-[10px] text-amber-400 font-black">?</span>}
                                     </div>
                                 </div>
                             );

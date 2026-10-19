@@ -6,7 +6,7 @@
 // avec des polices), barres de mesure et espacement pour le rythme. Si l'image ne s'y prête pas (photo de
 // travers, manuscrit…), splitTabStaves() prépare les portées pour une lecture par l'IA.
 
-import type { MelodyNote } from '../types';
+import type { MelodyNote, ScanReading } from '../types';
 
 export interface TabStaffImage {
     data: string;      // base64 sans préfixe data:
@@ -266,6 +266,16 @@ const rowsExtent = (grid: Float32Array, fromRow: number, toRow: number): number 
 };
 
 const TIE_MARGIN = 0.06;
+// Écart de score avec la lecture concurrente au-delà duquel un chiffre est sûr (normal / minuscule).
+// Réglé sur des milliers de chiffres générés (polices, tailles, JPEG) : sous la moitié de cet écart
+// (confiance < 0,5), on trouve ~86 % des erreurs de lecture, et ~5 % (minuscules : ~19 %) des bonnes.
+const SURE_MARGIN = 0.12;
+const TINY_SURE_MARGIN = 0.06;
+// Un rival exclu par les boucles (un 6 pour un 8 à deux boucles) compte, mais un peu moins
+const LOOP_RIVAL_PENALTY = 0.04;
+/** Confiance sous laquelle une note est signalée comme douteuse. */
+export const DOUBTFUL_CONFIDENCE = 0.5;
+export const isDoubtful = (note: MelodyNote): boolean => !!note.scan && note.scan.confidence < DOUBTFUL_CONFIDENCE;
 const TINY_GAP_PX = 10;
 const TINY_DIGIT_PX = 10; // hauteur (dans l'image d'origine) en dessous de laquelle un trou peut disparaître
 
@@ -340,27 +350,41 @@ const isSlideMark = (ink: (x: number, y: number) => boolean, w: number, h: numbe
     return centers.every((c, i) => i === 0 || (c - centers[i - 1]) * Math.sign(drift) >= -1);
 };
 
-const classifyDigit = (grid: Float32Array, aspect: number, glyphHeight: number, allowed: number[]): number => {
+/** Lecture d'un signe : le meilleur candidat, et le meilleur des autres (pour juger de l'ambiguïté). */
+interface Reading { digit: number; score: number; runnerUp?: { digit: number; score: number } }
+
+const reading = (ranked: [number, number][], digit: number): Reading => {
+    const best = ranked.find(r => r[0] === digit)!;
+    const other = ranked.find(r => r[0] !== digit);
+    return { digit, score: best[1], runnerUp: other && { digit: other[0], score: other[1] } };
+};
+
+const classifyDigit = (grid: Float32Array, aspect: number, glyphHeight: number, allowed: number[]): Reading => {
     const soft = blur(grid);
     const perDigit = new Map<number, number>();
     for (const t of digitTemplates(glyphHeight)) {
-        if (!allowed.includes(t.digit)) continue;
         // Forme (corrélation) d'abord ; les proportions départagent 1 / 7 / 4…
         const score = correlation(soft, t.grid) - Math.abs(Math.log(aspect / t.aspect)) * 0.3;
         perDigit.set(t.digit, Math.max(perDigit.get(t.digit) ?? -Infinity, score));
     }
-    let ranked = [...perDigit.entries()].sort((a, b) => b[1] - a[1]);
+    // Tous les signes sont notés : seuls ceux qu'autorisent les boucles peuvent gagner, mais un autre
+    // qui ressemble autant rend la lecture douteuse
+    let all = [...perDigit.entries()].map(([d, sc]): [number, number] => [d, allowed.includes(d) ? sc : sc - LOOP_RIVAL_PENALTY]).sort((a, b) => b[1] - a[1]);
+    let ranked = all.filter(r => allowed.includes(r[0]));
     // Le 2 se termine par une barre horizontale : sans elle (bas étroit), c'est un 7 ou un 1
-    if (ranked[0][0] === 2 && ranked.length > 1 && rowsExtent(grid, GRID - 2, GRID) < 0.5) ranked = ranked.slice(1);
-    let best = { digit: ranked[0][0], score: ranked[0][1] };
+    if (ranked[0][0] === 2 && ranked.length > 1 && rowsExtent(grid, GRID - 2, GRID) < 0.5) {
+        ranked = ranked.slice(1);
+        all = all.filter(r => r[0] !== 2);
+    }
+    let digit = ranked[0][0];
     // Petits chiffres flous : 1 et 7 se ressemblent. La hampe du 7 penche vers la gauche
     // (son bas est à gauche de sa barre du haut), celle du 1 est droite.
     const [first, second] = ranked;
     if (second && first[1] - second[1] < TIE_MARGIN && [first[0], second[0]].sort().join() === '1,7') {
         const slant = (rowsCenter(grid, Math.round(GRID * 0.7), GRID) - rowsCenter(grid, 0, Math.round(GRID * 0.25))) / GRID;
-        best = { digit: slant < 0 ? 7 : 1, score: first[1] };
+        digit = slant < 0 ? 7 : 1;
     }
-    return best.digit;
+    return reading(all, digit);
 };
 
 // --- Chiffres minuscules ------------------------------------------------------------------------
@@ -433,19 +457,44 @@ const patchSimilarity = (a: Patch, b: Patch): number => {
     return best;
 };
 
-const classifyTiny = (patch: Patch): number => {
-    let best = { digit: -1, score: -Infinity };
+const classifyTiny = (patch: Patch): Reading => {
+    const perDigit = new Map<number, number>();
     for (const t of tinyTemplates(patch.h)) {
-        const score = patchSimilarity(patch, t);
-        if (score > best.score) best = { digit: t.digit, score };
+        perDigit.set(t.digit, Math.max(perDigit.get(t.digit) ?? -Infinity, patchSimilarity(patch, t)));
     }
-    return best.digit;
+    const ranked = [...perDigit.entries()].sort((a, b) => b[1] - a[1]);
+    return ranked.length ? reading(ranked, ranked[0][0]) : { digit: MUTED, score: 0 };
+};
+
+// --- Confiance ----------------------------------------------------------------------------------
+
+/** Sûreté de la lecture d'un signe (0 … 1), d'après son écart avec la lecture concurrente. */
+const signConfidence = (read: Reading, tiny: boolean): number => {
+    const margin = read.runnerUp ? read.score - read.runnerUp.score : 1;
+    return Math.max(0, Math.min(1, margin / (tiny ? TINY_SURE_MARGIN : SURE_MARGIN)));
+};
+
+/**
+ * Sûreté d'une note (un ou plusieurs chiffres) : celle de son chiffre le moins sûr. L'autre lecture
+ * possible remplace ce chiffre par son concurrent (« 18 ou 10 ? »).
+ */
+const groupConfidence = (group: Glyph[], tiny: boolean): { confidence: number; alternative?: number } => {
+    const confidences = group.map(g => signConfidence(g.read, tiny));
+    const weakest = confidences.indexOf(Math.min(...confidences));
+    const rival = group[weakest].read.runnerUp?.digit;
+    let alternative: number | undefined;
+    if (rival === MUTED) alternative = group.length === 1 ? MUTED : undefined;
+    else if (rival !== undefined) {
+        const value = group.length === 1 ? rival : Number(group.map((g, k) => (k === weakest ? rival : g.digit)).join(''));
+        alternative = value <= 24 ? value : undefined;
+    }
+    return { confidence: confidences[weakest], alternative };
 };
 
 // --- Lecture d'une portée -------------------------------------------------------------------------
 
-interface Glyph { x0: number; x1: number; y0: number; y1: number; string: number; digit: number }
-interface TabNote { x: number; string: number; fret: number }
+interface Glyph { x0: number; x1: number; y0: number; y1: number; string: number; digit: number; read: Reading }
+interface TabNote { x: number; string: number; fret: number; scan: ScanReading }
 
 const readStaff = (gray: Gray, staff: Line[]): { notes: TabNote[]; bars: number[]; gap: number } => {
     const { lum, width } = gray;
@@ -626,29 +675,33 @@ const readStaff = (gray: Gray, staff: Line[]): { notes: TabNote[]; bars: number[
         const solid = (x: number, y: number) => pixel(x, y) && lum[(y0 + y + top) * width + x0 + x] < gray.holeThreshold;
         const strictLoops = tiny ? findLoops(solid, gw, gh) : { count: 0, centerY: 0.5, height: 0 };
         const loops = strictLoops.count > 0 ? strictLoops : findLoops(pixel, gw, gh);
-        const digit = isSlideMark(pixel, gw, gh) ? SLIDE
-            : tinyStaff ? classifyTiny(nativePatch(x0, y0, gw, gh, pixel) ?? { w: 1, h: 1, dark: new Float32Array(1) })
+        if (isSlideMark(pixel, gw, gh)) continue;
+        const read = tinyStaff ? classifyTiny(nativePatch(x0, y0, gw, gh, pixel) ?? { w: 1, h: 1, dark: new Float32Array(1) })
             : classifyDigit(normalize(pixel, gw, gh), gw / gh, gh, digitsForLoops(loops, tiny));
-        if (digit !== SLIDE) glyphs.push({ x0, x1, y0, y1, string: nearest + 1, digit });
+        glyphs.push({ x0, x1, y0, y1, string: nearest + 1, digit: read.digit, read });
     }
 
     // Chiffres voisins sur la même corde = un nombre (10, 12…)
     glyphs.sort((a, b) => a.string - b.string || a.x0 - b.x0);
     const notes: TabNote[] = [];
     for (let i = 0; i < glyphs.length; i++) {
-        if (glyphs[i].digit === MUTED) {
-            notes.push({ x: (glyphs[i].x0 + glyphs[i].x1) / 2, string: glyphs[i].string, fret: MUTED });
-            continue;
+        const group = [glyphs[i]];
+        if (glyphs[i].digit !== MUTED) {
+            while (i + 1 < glyphs.length && glyphs[i + 1].string === glyphs[i].string && glyphs[i + 1].digit >= 0 && glyphs[i + 1].x0 - glyphs[i].x1 < gap * 0.35) {
+                group.push(glyphs[++i]);
+            }
         }
-        let fret = String(glyphs[i].digit);
-        let x1 = glyphs[i].x1;
-        while (i + 1 < glyphs.length && glyphs[i + 1].string === glyphs[i].string && glyphs[i + 1].digit >= 0 && glyphs[i + 1].x0 - x1 < gap * 0.35) {
-            i++;
-            fret += glyphs[i].digit;
-            x1 = glyphs[i].x1;
-        }
-        const value = Number(fret);
-        if (value <= 24) notes.push({ x: (glyphs[i].x0 + x1) / 2, string: glyphs[i].string, fret: value });
+        const fret = group[0].digit === MUTED ? MUTED : Number(group.map(g => g.digit).join(''));
+        if (fret > 24) continue;
+        const x0 = group[0].x0, x1 = group[group.length - 1].x1;
+        const y0 = Math.min(...group.map(g => g.y0)), y1 = Math.max(...group.map(g => g.y1));
+        notes.push({
+            x: (x0 + x1) / 2, string: group[0].string, fret,
+            scan: {
+                ...groupConfidence(group, tinyStaff),
+                box: { x: x0 / gray.zoom, y: (y0 + top) / gray.zoom, w: (x1 - x0 + 1) / gray.zoom, h: (y1 - y0 + 1) / gray.zoom },
+            },
+        });
     }
     return { notes, bars, gap };
 };
@@ -681,7 +734,7 @@ const staffToSequence = ({ notes, bars, gap }: ReturnType<typeof readStaff>): Me
     }
     return events.flatMap((e, i) => {
         const chord = e.notes.filter((n, k, all) => all.findIndex(m => m.string === n.string) === k).sort((a, b) => b.string - a.string);
-        return chord.map((n, k) => ({ string: n.string, fret: n.fret, duration: k === chord.length - 1 ? durations[i] : 0 }));
+        return chord.map((n, k) => ({ string: n.string, fret: n.fret, duration: k === chord.length - 1 ? durations[i] : 0, scan: n.scan }));
     });
 };
 

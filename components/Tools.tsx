@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { aiErrorText, generateLessonContent, scanGuitarTab, ScannedTab } from '../services/ai';
-import { UserLevel, MelodyNote } from '../types';
+import { UserLevel, MelodyNote, ScanReading } from '../types';
 import { Search, Loader2, Mic, Play, Square, Music, Activity, Camera, Zap, ArrowUp, ArrowDown, CheckCircle, Info, Power } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import Fretboard from './Fretboard';
@@ -9,6 +9,7 @@ import ChordDiagram from './ChordDiagram';
 import { autoCorrelate, getNoteNameFr, GuitarSynth } from '../utils/audio';
 import RiffPlayer from './RiffPlayer';
 import { STRING_NAMES_FR } from '../constants';
+import { isDoubtful } from '../utils/tabImage';
 
 interface ToolsProps {
     userLevel: UserLevel;
@@ -48,15 +49,46 @@ const Tools: React.FC<ToolsProps> = ({ userLevel }) => {
     );
 };
 
+const fretLabel = (fret: number) => (fret === -1 ? 'X (étouffée)' : String(fret));
+
+/** Fiabilité de la lecture : couleur et message selon la confiance moyenne. */
+const reliability = (confidence: number) => confidence >= 0.9
+    ? { label: 'Lecture fiable', bar: 'bg-green-500', text: 'text-green-400' }
+    : confidence >= 0.7
+        ? { label: 'Quelques notes à vérifier', bar: 'bg-amber-500', text: 'text-amber-400' }
+        : { label: 'Lecture incertaine : vérifiez sur l\'image', bar: 'bg-red-500', text: 'text-red-400' };
+
+/** Extrait agrandi de l'image autour d'une note, la note encadrée. */
+const ImageExtract = ({ image, size, box }: { image: string, size: { w: number, h: number }, box: ScanReading['box'] }) => {
+    const WIDTH = 240, HEIGHT = 110;
+    const zoom = Math.min(8, HEIGHT / (box.h * 5));
+    const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+    const left = WIDTH / 2 - cx * zoom, top = HEIGHT / 2 - cy * zoom;
+    return (
+        <div className="relative mx-auto rounded-lg border border-slate-600 bg-white overflow-hidden" style={{ width: WIDTH, height: HEIGHT }}>
+            <div style={{
+                position: 'absolute', left, top, width: size.w * zoom, height: size.h * zoom,
+                backgroundImage: `url(${image})`, backgroundSize: '100% 100%', imageRendering: zoom > 3 ? 'pixelated' : 'auto',
+            }} />
+            <div className="absolute border-2 border-amber-500 rounded" style={{
+                left: WIDTH / 2 - (box.w / 2 + 2) * zoom, top: HEIGHT / 2 - (box.h / 2 + 2) * zoom,
+                width: (box.w + 4) * zoom, height: (box.h + 4) * zoom,
+            }} />
+        </div>
+    );
+};
+
 const Scanner = () => {
     const [image, setImage] = useState<string | null>(null);
+    const [imageSize, setImageSize] = useState<{ w: number, h: number } | null>(null);
     const [loading, setLoading] = useState(false);
     const [tab, setTab] = useState<ScannedTab | null>(null);
     const [currentStep, setCurrentStep] = useState(0);
     const [scanError, setScanError] = useState<string | null>(null);
+    const [fixMessage, setFixMessage] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const reset = () => { setImage(null); setTab(null); setCurrentStep(0); setScanError(null); };
+    const reset = () => { setImage(null); setImageSize(null); setTab(null); setCurrentStep(0); setScanError(null); setFixMessage(null); };
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -65,9 +97,11 @@ const Scanner = () => {
         reader.onloadend = async () => {
             const dataUrl = reader.result as string;
             setImage(dataUrl);
+            setImageSize(null);
             setTab(null);
             setCurrentStep(0);
             setScanError(null);
+            setFixMessage(null);
             setLoading(true);
             try {
                 setTab(await scanGuitarTab(dataUrl, file.type || 'image/png'));
@@ -90,7 +124,31 @@ const Scanner = () => {
         else steps.push([note]);
     }
     const step = steps[currentStep];
-    const describe = (n: MelodyNote) => `corde ${n.string} (${STRING_NAMES_FR[n.string]}) ${n.fret === 0 ? 'à vide' : `case ${n.fret}`}`;
+    const describe = (n: MelodyNote) => n.fret === -1
+        ? `corde ${n.string} (${STRING_NAMES_FR[n.string]}) étouffée : frappée sans son`
+        : `${getNoteNameFr(n.string, n.fret)} (corde ${n.string} (${STRING_NAMES_FR[n.string]}) ${n.fret === 0 ? 'à vide' : `case ${n.fret}`})`;
+
+    // Doutes regroupés : une même hésitation (« 10 ou 18 ? ») revient souvent sur une page
+    const doubts = new Map<string, { fret: number, alternative?: number, steps: number[] }>();
+    steps.forEach((notes, index) => notes.filter(isDoubtful).forEach(n => {
+        const key = `${n.fret}|${n.scan!.alternative}`;
+        const doubt = doubts.get(key) || { fret: n.fret, alternative: n.scan!.alternative, steps: [] };
+        if (!doubt.steps.includes(index)) doubt.steps.push(index);
+        doubts.set(key, doubt);
+    }));
+    const doubtfulCount = tab ? tab.sequence.filter(isDoubtful).length : 0;
+    const nextStepOf = (indexes: number[]) => indexes.find(i => i > currentStep) ?? indexes[0];
+
+    /** L'élève a vérifié sur l'image : la note (et celles lues de la même façon) prend la valeur choisie. */
+    const settleDoubt = (note: MelodyNote, fret: number) => {
+        if (!tab) return;
+        const same = (n: MelodyNote) => isDoubtful(n) && n.fret === note.fret && n.scan!.alternative === note.scan!.alternative;
+        const count = tab.sequence.filter(same).length;
+        const sequence = tab.sequence.map(n => (same(n) ? { ...n, fret, scan: { ...n.scan!, confidence: 1, alternative: undefined } } : n));
+        const confidence = sequence.reduce((sum, n) => sum + (n.scan?.confidence ?? 1), 0) / sequence.length;
+        setTab({ ...tab, sequence, confidence });
+        setFixMessage(count > 1 ? `Corrigé : ${fretLabel(fret)} sur les ${count} notes lues de la même façon.` : `Corrigé : ${fretLabel(fret)}.`);
+    };
 
     return (
         <div className="flex flex-col h-full p-6 animate-fadeIn overflow-y-auto">
@@ -104,7 +162,8 @@ const Scanner = () => {
              ) : (
                  <div className="flex flex-col">
                      <div className="relative rounded-xl overflow-hidden mb-4 border border-slate-700 bg-white">
-                         <img src={image} alt="Tablature importée" className="w-full max-h-64 object-contain" />
+                         <img src={image} alt="Tablature importée" className="w-full max-h-64 object-contain"
+                             onLoad={e => setImageSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })} />
                          <button onClick={reset} aria-label="Changer d'image" className="absolute top-2 right-2 bg-black/60 p-2 rounded-full text-white">×</button>
                      </div>
                      {loading ? (
@@ -118,19 +177,75 @@ const Scanner = () => {
                                  ? "Lue directement dans l'image (rythme déduit de l'espacement, en 4/4)."
                                  : "Lue par l'IA : vérifiez-la sur l'image avant de l'apprendre."} />
 
+                             {/* Fiabilité de la lecture */}
+                             <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 mb-4">
+                                 {tab.source === 'direct' && tab.confidence !== undefined ? (() => {
+                                     const r = reliability(tab.confidence);
+                                     return (
+                                         <>
+                                             <div className="flex justify-between items-baseline mb-2">
+                                                 <span className={`font-bold ${r.text}`}>{r.label}</span>
+                                                 <span className="text-white font-black text-lg">{Math.round(tab.confidence * 100)} %</span>
+                                             </div>
+                                             <div className="h-2 bg-slate-700 rounded-full overflow-hidden mb-3">
+                                                 <div className={`h-full ${r.bar}`} style={{ width: `${Math.round(tab.confidence * 100)}%` }} />
+                                             </div>
+                                             {doubtfulCount === 0 ? (
+                                                 <p className="text-sm text-slate-300">Aucune note douteuse : chaque chiffre ressemble nettement plus à sa lecture qu'à toute autre.</p>
+                                             ) : (
+                                                 <>
+                                                     <p className="text-sm text-slate-300 mb-2">
+                                                         {doubtfulCount} note{doubtfulCount > 1 ? 's' : ''} douteuse{doubtfulCount > 1 ? 's' : ''} sur {tab.sequence.length} (encadrées en orange). Touchez un doute pour aller le vérifier :
+                                                     </p>
+                                                     <div className="flex flex-wrap gap-2">
+                                                         {[...doubts.values()].map(d => (
+                                                             <button key={`${d.fret}|${d.alternative}`} onClick={() => { setCurrentStep(nextStepOf(d.steps)); setFixMessage(null); }}
+                                                                 className="px-3 py-1.5 rounded-lg border border-dashed border-amber-500 text-amber-300 text-sm font-bold hover:bg-amber-500/10">
+                                                                 {fretLabel(d.fret)}{d.alternative !== undefined ? ` ou ${fretLabel(d.alternative)}` : ''} ? <span className="text-slate-400 font-normal">×{d.steps.length}</span>
+                                                             </button>
+                                                         ))}
+                                                     </div>
+                                                 </>
+                                             )}
+                                             <p className="text-xs text-slate-500 mt-3">Le rythme, lui, est estimé d'après l'espacement des notes : écoutez-le avec la partition.</p>
+                                         </>
+                                     );
+                                 })() : (
+                                     <p className="text-sm text-amber-300">Lue par l'IA : fiabilité inconnue. Vérifiez chaque note sur l'image avant de l'apprendre.</p>
+                                 )}
+                             </div>
+
                              <div className="flex justify-between items-center mb-3">
                                  <h3 className="text-lg font-bold text-white">Pas à pas : {currentStep + 1} / {steps.length}</h3>
                                  <div className="flex gap-2">
-                                     <button onClick={() => setCurrentStep(Math.max(0, currentStep - 1))} disabled={currentStep === 0} className="px-3 py-2 bg-slate-700 rounded-lg text-white disabled:opacity-40">Précédent</button>
+                                     <button onClick={() => { setCurrentStep(Math.max(0, currentStep - 1)); setFixMessage(null); }} disabled={currentStep === 0} className="px-3 py-2 bg-slate-700 rounded-lg text-white disabled:opacity-40">Précédent</button>
                                      <button onClick={() => GuitarSynth.playMelody(step.map(n => ({ ...n, duration: 0 })), tab.tempo)} className="px-3 py-2 bg-slate-700 rounded-lg text-amber-400" aria-label="Écouter ce pas"><Play size={16} fill="currentColor" /></button>
-                                     <button onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))} disabled={currentStep === steps.length - 1} className="px-3 py-2 bg-amber-500 text-slate-900 font-bold rounded-lg disabled:opacity-40">Suivant</button>
+                                     <button onClick={() => { setCurrentStep(Math.min(steps.length - 1, currentStep + 1)); setFixMessage(null); }} disabled={currentStep === steps.length - 1} className="px-3 py-2 bg-amber-500 text-slate-900 font-bold rounded-lg disabled:opacity-40">Suivant</button>
                                  </div>
                              </div>
                              <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 mb-4 text-center">
                                  <div className="text-xl font-black text-amber-500">
-                                     {step.length > 1 ? 'Ensemble : ' : 'Jouez '}{step.map(n => `${getNoteNameFr(n.string, n.fret)} (${describe(n)})`).join(' + ')}
+                                     {step.length > 1 ? 'Ensemble : ' : 'Jouez '}{step.map(describe).join(' + ')}
                                  </div>
                              </div>
+                             {fixMessage && <p className="text-sm text-green-400 mb-4 text-center">{fixMessage}</p>}
+                             {step.filter(isDoubtful).map((n, i) => (
+                                 <div key={i} className="bg-amber-500/10 p-4 rounded-xl border border-dashed border-amber-500 mb-4">
+                                     <p className="text-amber-300 font-bold mb-1">
+                                         Lecture incertaine, corde {n.string} : {fretLabel(n.fret)}{n.scan!.alternative !== undefined ? ` ou ${fretLabel(n.scan!.alternative)}` : ''} ?
+                                         <span className="text-slate-400 font-normal"> (confiance {Math.round(n.scan!.confidence * 100)} %)</span>
+                                     </p>
+                                     <p className="text-sm text-slate-300 mb-3">Regardez le chiffre encadré sur votre image, puis choisissez :</p>
+                                     {imageSize && <ImageExtract image={image} size={imageSize} box={n.scan!.box} />}
+                                     <div className="flex justify-center gap-2 mt-3">
+                                         {[n.fret, n.scan!.alternative].filter((f): f is number => f !== undefined).map(f => (
+                                             <button key={f} onClick={() => settleDoubt(n, f)} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold">
+                                                 C'est {f === -1 ? 'un X' : `un ${f}`}
+                                             </button>
+                                         ))}
+                                     </div>
+                                 </div>
+                             ))}
                              <Fretboard
                                  targetString={step[0].string}
                                  targetFret={step[0].fret}

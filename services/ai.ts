@@ -168,6 +168,7 @@ export interface ScannedTab {
   tempo: number;
   sequence: MelodyNote[]; // notes jouées ensemble : durée 0 sauf la dernière de l'événement
   source: 'direct' | 'ai'; // lue directement dans l'image, ou par l'IA (à vérifier)
+  confidence?: number;     // lecture directe : confiance moyenne des notes (0 … 1) ; inconnue pour l'IA
 }
 
 interface ScanEvent { notes?: { string?: number, fret?: number }[], duration?: number }
@@ -191,12 +192,13 @@ const eventsToSequence = (events: ScanEvent[]): MelodyNote[] => events.flatMap(e
  * 2. Sinon, chaque portée est découpée, agrandie et numérotée, puis lue par l'IA.
  */
 export const scanGuitarTab = async (dataUrl: string, mimeType: string = 'image/png'): Promise<ScannedTab> => {
-  const direct = await readTabImage(dataUrl).catch(() => []);
+  const direct = await readTabImage(dataUrl).catch((): MelodyNote[] => []);
   if (direct.length > 0) {
     const meta = await callApi<{ title?: string, tempo?: number }>('scan', { image: dataUrl.split(',')[1], mimeType, metaOnly: true })
       .catch(() => ({ title: '', tempo: 0 }));
     const tempo = Number(meta.tempo);
-    return { title: (meta.title || '').trim(), tempo: tempo >= 30 && tempo <= 240 ? tempo : 80, sequence: direct, source: 'direct' };
+    const confidence = direct.reduce((sum, n) => sum + (n.scan?.confidence ?? 1), 0) / direct.length;
+    return { title: (meta.title || '').trim(), tempo: tempo >= 30 && tempo <= 240 ? tempo : 80, sequence: direct, source: 'direct', confidence };
   }
 
   const staves = await splitTabStaves(dataUrl).catch(() => []);

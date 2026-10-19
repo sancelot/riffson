@@ -15,8 +15,16 @@ export interface FretboardPosition {
 
 export type PluckFinger = 'p' | 'i' | 'm' | 'a' | 'pick';
 
+/** Note lue par le scanner dans une image : sûreté de la lecture et emplacement à vérifier. */
+export interface ScanReading {
+    confidence: number;   // 0 (lecture au hasard) … 1 (aucune ambiguïté)
+    alternative?: number; // autre lecture possible de la case (-1 = note étouffée)
+    box: { x: number; y: number; w: number; h: number }; // en pixels de l'image d'origine
+}
+
 export interface MelodyNote extends FretboardPosition {
     duration?: number; // en temps (1.0 = noire, 0.5 = croche)
+    scan?: ScanReading; // seulement pour une note lue par le scanner
     finger?: number;   // doigt main gauche (1 index ... 4 auriculaire), absent pour une corde à vide
     pluck?: PluckFinger; // doigt main droite : pouce, index, majeur, annulaire ou médiator
     lyric?: string;      // syllabe chantée sur cette note (aide à reconnaître la mélodie)
