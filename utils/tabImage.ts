@@ -16,7 +16,8 @@ export interface TabStaffImage {
 interface Line { y: number; top: number; bottom: number }
 
 const LINE_DARK_RATIO = 0.45;   // part de pixels sombres d'une ligne de portée
-const DARK_LUMINANCE = 150;     // en dessous : pixel considéré comme encre
+const DARK_LUMINANCE = 150;     // en dessous : pixel considéré comme encre (chiffres)
+const LINE_LUMINANCE = 200;     // lignes de portée et barres : souvent fines et grises (anticrénelage)
 const LINES_PER_TAB_STAFF = 6;
 const ANALYSIS_LINE_GAP_PX = 24; // écart entre lignes visé pour l'analyse (petites images agrandies)
 const MAX_ANALYSIS_ZOOM = 4;
@@ -59,7 +60,7 @@ const findHorizontalLines = ({ lum, width, height }: Gray): Line[] => {
     let runStart = -1;
     for (let y = 0; y <= height; y++) {
         let dark = 0;
-        if (y < height) for (let x = 0; x < width; x += 2) if (lum[y * width + x] < DARK_LUMINANCE) dark++;
+        if (y < height) for (let x = 0; x < width; x += 2) if (lum[y * width + x] < LINE_LUMINANCE) dark++;
         const isLine = y < height && dark / (width / 2) > LINE_DARK_RATIO;
         if (isLine && runStart < 0) runStart = y;
         if (!isLine && runStart >= 0) {
@@ -85,7 +86,11 @@ const groupTabStaves = (lines: Line[]): Line[][] => {
             i++;
         }
     }
-    return staves.slice(0, MAX_STAVES);
+    // Toutes les portées de tablature d'une page ont le même interligne : un groupe différent est
+    // en fait une portée de notes (5 lignes + une ligne de ligature, par exemple)
+    const gaps = staves.map(staffGap).sort((a, b) => a - b);
+    const median = gaps[Math.floor(gaps.length / 2)];
+    return staves.filter(s => Math.abs(staffGap(s) - median) < median * 0.2).slice(0, MAX_STAVES);
 };
 
 const staffGap = (staff: Line[]) => (staff[LINES_PER_TAB_STAFF - 1].y - staff[0].y) / (LINES_PER_TAB_STAFF - 1);
@@ -276,7 +281,12 @@ const readStaff = ({ lum, width }: Gray, staff: Line[]): { notes: TabNote[]; bar
     // Barres de mesure : colonnes encrées sur toute la hauteur de la portée
     const lineTop = Math.round(staff[0].y - top), lineBottom = Math.round(staff[LINES_PER_TAB_STAFF - 1].y - top);
     const bars: number[] = [];
-    const columnDark = (x: number) => { let dark = 0; for (let y = lineTop; y <= lineBottom; y++) dark += at(x, y); return dark / (lineBottom - lineTop + 1); };
+    // (seuil des lignes : les barres sont souvent aussi fines et grises que les lignes de portée)
+    const columnDark = (x: number) => {
+        let dark = 0;
+        for (let y = lineTop; y <= lineBottom; y++) if (lum[(y + top) * width + x] < LINE_LUMINANCE) dark++;
+        return dark / (lineBottom - lineTop + 1);
+    };
     const barColumns: number[] = [];
     for (let x = 0; x < width; x++) {
         if (columnDark(x) >= 0.9) {
@@ -293,28 +303,34 @@ const readStaff = ({ lum, width }: Gray, staff: Line[]): { notes: TabNote[]; bar
         }
     }
 
-    // Effacement des lignes de portée, sauf là où un chiffre les traverse (encre juste au-dessus et au-dessous)
-    for (const line of staff) {
-        const t = line.top - top - 1, b = line.bottom - top + 1;
+    // Copie intacte (avant effacement des lignes) : sert à reconnaître les chiffres coupés par une ligne
+    const intact = ink.slice();
+    const intactAt = (x: number, y: number) => (x >= 0 && x < width && y >= 0 && y < h ? intact[y * width + x] : 0);
+
+    // Effacement des lignes de portée, sauf là où un trait vertical de chiffre les traverse.
+    // Un trait oblique (le 2, le 7…) peut être coupé : les morceaux sont recollés plus bas.
+    const lineBands = staff.map(line => ({ t: line.top - top - 1, b: line.bottom - top + 1 }));
+    for (const { t, b } of lineBands) {
         for (let x = 0; x < width; x++) {
             if (at(x, t) && at(x, b)) continue;
             for (let y = t + 1; y < b; y++) if (y >= 0 && y < h) ink[y * width + x] = 0;
         }
     }
 
-    // Composantes connexes = chiffres candidats
+    // Composantes connexes
+    interface Part { x0: number; x1: number; y0: number; y1: number; count: number; rejoined?: boolean }
     const seen = new Uint8Array(width * h);
-    const glyphs: Glyph[] = [];
+    const parts: Part[] = [];
     for (let start = 0; start < ink.length; start++) {
         if (!ink[start] || seen[start]) continue;
         const stack = [start];
         seen[start] = 1;
-        let x0 = width, x1 = 0, y0 = h, y1 = 0, count = 0;
+        const part = { x0: width, x1: 0, y0: h, y1: 0, count: 0 };
         while (stack.length) {
             const p = stack.pop()!;
             const x = p % width, y = (p - x) / width;
-            count++;
-            x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+            part.count++;
+            part.x0 = Math.min(part.x0, x); part.x1 = Math.max(part.x1, x); part.y0 = Math.min(part.y0, y); part.y1 = Math.max(part.y1, y);
             for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
                 const nx = x + dx, ny = y + dy;
                 if (nx < 0 || nx >= width || ny < 0 || ny >= h) continue;
@@ -322,6 +338,31 @@ const readStaff = ({ lum, width }: Gray, staff: Line[]): { notes: TabNote[]; bar
                 if (ink[q] && !seen[q]) { seen[q] = 1; stack.push(q); }
             }
         }
+        parts.push(part);
+    }
+
+    // Recollage des morceaux d'un même chiffre coupé net par une ligne : l'un finit juste au-dessus
+    // de la ligne, l'autre commence juste en dessous, et ils se superposent horizontalement
+    let merged = true;
+    while (merged) {
+        merged = false;
+        for (let i = 0; i < parts.length && !merged; i++) {
+            for (let j = 0; j < parts.length && !merged; j++) {
+                const a = parts[i], b = parts[j];
+                if (i === j) continue;
+                const overlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+                if (overlap < -2) continue;
+                const cut = lineBands.some(band => Math.abs(a.y1 - band.t) <= 1 && Math.abs(b.y0 - band.b) <= 1);
+                if (!cut) continue;
+                parts[i] = { x0: Math.min(a.x0, b.x0), x1: Math.max(a.x1, b.x1), y0: a.y0, y1: b.y1, count: a.count + b.count, rejoined: true };
+                parts.splice(j, 1);
+                merged = true;
+            }
+        }
+    }
+
+    const glyphs: Glyph[] = [];
+    for (const { x0, x1, y0, y1, count, rejoined } of parts) {
         const gh = y1 - y0 + 1, gw = x1 - x0 + 1;
         // Un chiffre de tablature : à peu près la hauteur d'un interligne, centré sur une ligne
         // (un trait vertical très fin est une hampe ou un reste de barre, pas un chiffre)
@@ -331,9 +372,9 @@ const readStaff = ({ lum, width }: Gray, staff: Line[]): { notes: TabNote[]; bar
         const cy = (y0 + y1) / 2 + top;
         const nearest = staff.reduce((best, line, k) => Math.abs(line.y - cy) < Math.abs(staff[best].y - cy) ? k : best, 0);
         if (Math.abs(staff[nearest].y - cy) > gap * 0.4) continue; // signe de mesure (4/4), texte…
-        const grid = normalize((x, y) => at(x0 + x, y0 + y) === 1, gw, gh);
-        const loops = countLoops((x, y) => at(x0 + x, y0 + y) === 1, gw, gh);
-        glyphs.push({ x0, x1, y0, y1, string: nearest + 1, digit: classifyDigit(grid, gw / gh, gh, loops) });
+        // Chiffre recollé : on le lit dans la copie intacte (sinon il lui manque la rangée de la ligne)
+        const pixel = (x: number, y: number) => (rejoined ? intactAt(x0 + x, y0 + y) : at(x0 + x, y0 + y)) === 1;
+        glyphs.push({ x0, x1, y0, y1, string: nearest + 1, digit: classifyDigit(normalize(pixel, gw, gh), gw / gh, gh, countLoops(pixel, gw, gh)) });
     }
 
     // Chiffres voisins sur la même corde = un nombre (10, 12…)
