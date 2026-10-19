@@ -1,9 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { UserLevel, UserProfile, Lesson } from '../types';
 import { INITIAL_LESSONS } from '../constants';
 import { aiErrorText, generatePracticeRoutine, generateNextLesson } from '../services/ai';
-import { PlayCircle, CheckCircle, Clock, Trophy, Sparkles, Loader2, Lock, Flame, Brain, Star, Plus, Zap } from 'lucide-react';
+import { PlayCircle, CheckCircle, Clock, Trophy, Sparkles, Loader2, Flame, Brain, Star, Plus, Zap } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { currentStreak, dueReviews } from '../utils/progress';
 
@@ -11,23 +11,19 @@ interface DashboardProps {
   user: UserProfile;
   onSelectLesson: (lesson: Lesson) => void;
   onAddLesson: (lesson: Lesson) => void;
+  onChangeLevel: (level: UserLevel) => void;
 }
 
 const LEVEL_ORDER = [UserLevel.BEGINNER, UserLevel.INTERMEDIATE, UserLevel.ADVANCED];
 
-const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson }) => {
-  const [viewLevel, setViewLevel] = useState<UserLevel>(user.level);
+const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson, onChangeLevel }) => {
+  // Le parcours affiché est celui du niveau choisi par l'élève
+  const viewLevel = user.level;
   const [dailyRoutine, setDailyRoutine] = useState<string | null>(null);
   const [loadingRoutine, setLoadingRoutine] = useState(false);
   const [isGeneratingLesson, setIsGeneratingLesson] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  
-  useEffect(() => {
-    setViewLevel(user.level);
-  }, [user.level]);
 
-  const currentLevelIndex = LEVEL_ORDER.indexOf(user.level);
-  
   // Combine Standard Lessons + AI Generated Lessons
   const standardLessons = INITIAL_LESSONS[viewLevel] || [];
   const generatedLessons = (user.generatedLessons || []).filter(l => l.level === viewLevel);
@@ -66,8 +62,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
     }
   };
 
-  // On peut générer une leçon si le parcours est vide (niveaux sans leçons de base) ou si la dernière est validée
-  const lastLessonDone = allLessons.length === 0 || user.completedLessons.includes(allLessons[allLessons.length - 1].id);
+  // Toutes les leçons restent accessibles : on se contente de suggérer la première non validée
+  const recommendedLessonId = allLessons.find(l => !user.completedLessons.includes(l.id))?.id;
 
   // Révisions espacées : toutes les leçons validées, quel que soit le niveau affiché
   const reviewQueue = dueReviews(user, [...Object.values(INITIAL_LESSONS).flat(), ...(user.generatedLessons || [])]);
@@ -143,30 +139,33 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
       </div>
 
       <div className="p-6 space-y-8">
-        {/* Level Selector */}
-        <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
-             {LEVEL_ORDER.map((lvl, idx) => {
-                 const isLocked = idx > currentLevelIndex;
-                 const isActive = lvl === viewLevel;
-                 return (
-                     <button 
-                        key={lvl}
-                        disabled={isLocked}
-                        onClick={() => setViewLevel(lvl)}
-                        className={`
-                            whitespace-nowrap px-5 py-2.5 rounded-full text-sm font-bold transition-all border shadow-sm
-                            ${isActive 
-                                ? 'bg-amber-500 text-slate-900 border-amber-500 shadow-amber-500/20 scale-105' 
-                                : isLocked 
-                                    ? 'bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed' 
+        {/* Level Selector : libre, il change le niveau de l'élève */}
+        <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">Mon niveau</p>
+            <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar" role="radiogroup" aria-label="Mon niveau">
+                 {LEVEL_ORDER.map((lvl) => {
+                     const isActive = lvl === viewLevel;
+                     return (
+                         <button
+                            key={lvl}
+                            role="radio"
+                            aria-checked={isActive}
+                            onClick={() => onChangeLevel(lvl)}
+                            className={`
+                                whitespace-nowrap px-5 py-2.5 rounded-full text-sm font-bold transition-all border shadow-sm
+                                ${isActive
+                                    ? 'bg-amber-500 text-slate-900 border-amber-500 shadow-amber-500/20 scale-105'
                                     : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500 hover:bg-slate-750'}
-                        `}
-                     >
-                         {isLocked && <Lock size={12} className="inline mr-2 opacity-50" />}
-                         {lvl}
-                     </button>
-                 );
-             })}
+                            `}
+                         >
+                             {lvl}
+                         </button>
+                     );
+                 })}
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+                Changez de niveau quand vous voulez : le parcours, le coach et les routines s'y adaptent.
+            </p>
         </div>
 
         {/* Lessons List Map */}
@@ -183,26 +182,22 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
                 {allLessons.map((lesson, index) => {
                     const isCompleted = user.completedLessons.includes(lesson.id);
                     const mastery = user.lessonMastery?.[lesson.id] || 0;
-                    const isLocked = index > 0 && !user.completedLessons.includes(allLessons[index - 1].id) && !isCompleted;
+                    const isRecommended = lesson.id === recommendedLessonId;
 
                     return (
                     <div key={lesson.id} className="relative z-10 group animate-slideUp" style={{ animationDelay: `${index * 50}ms` }}>
                         <button
-                            onClick={() => !isLocked && onSelectLesson(lesson)}
-                            disabled={isLocked}
-                            className={`
-                                w-full flex items-center text-left transition-all duration-300
-                                ${isLocked ? 'opacity-60 grayscale' : 'opacity-100 hover:translate-x-2'}
-                            `}
+                            onClick={() => onSelectLesson(lesson)}
+                            className="w-full flex items-center text-left transition-all duration-300 opacity-100 hover:translate-x-2"
                         >
                             {/* Icon Node */}
                             <div className={`
                                 w-14 h-14 rounded-full flex items-center justify-center mr-5 flex-shrink-0 border-4 shadow-xl transition-all relative
-                                ${isCompleted 
-                                    ? 'bg-slate-900 border-green-500 text-green-500' 
-                                    : isLocked 
-                                        ? 'bg-slate-800 border-slate-700 text-slate-600' 
-                                        : 'bg-gradient-to-br from-amber-400 to-orange-500 border-slate-900 text-slate-900 scale-110 shadow-amber-500/30'}
+                                ${isCompleted
+                                    ? 'bg-slate-900 border-green-500 text-green-500'
+                                    : isRecommended
+                                        ? 'bg-gradient-to-br from-amber-400 to-orange-500 border-slate-900 text-slate-900 scale-110 shadow-amber-500/30'
+                                        : 'bg-slate-800 border-slate-600 text-amber-400'}
                             `}>
                                 {lesson.isGenerated && (
                                     <div className="absolute -top-1 -right-1 bg-purple-500 text-white p-0.5 rounded-full z-20 border-2 border-slate-900">
@@ -212,10 +207,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
                                 
                                 {isCompleted ? (
                                     mastery >= 100 ? <Star size={24} fill="currentColor" /> : <CheckCircle size={24} strokeWidth={3} />
-                                ) : isLocked ? (
-                                    <Lock size={20} /> 
                                 ) : (
-                                    <PlayCircle size={28} strokeWidth={2.5} className="animate-pulse" />
+                                    <PlayCircle size={28} strokeWidth={2.5} className={isRecommended ? 'animate-pulse' : ''} />
                                 )}
                             </div>
                             
@@ -224,15 +217,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
                                 flex-1 bg-slate-800 p-5 rounded-2xl border transition-all relative overflow-hidden
                                 ${isCompleted 
                                     ? 'border-green-500/30 bg-green-500/5' 
-                                    : isLocked 
-                                        ? 'border-slate-800' 
-                                        : lesson.isGenerated 
+                                    : lesson.isGenerated
                                             ? 'border-purple-500/40 hover:border-purple-500 hover:shadow-lg hover:shadow-purple-500/10'
                                             : 'border-slate-700 hover:border-amber-500/50 hover:shadow-lg hover:shadow-amber-500/5'}
                             `}>
                                 <div className="flex justify-between items-start mb-1">
                                     <h3 className={`font-bold text-lg ${isCompleted ? 'text-green-400' : 'text-white'}`}>
                                         {lesson.title}
+                                        {isRecommended && (
+                                            <span className="ml-2 align-middle text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-900 rounded px-1.5 py-0.5">Recommandée</span>
+                                        )}
                                     </h3>
                                     {lesson.exercises && lesson.exercises.length > 0 && (
                                         <div className="bg-purple-500/20 text-purple-300 p-1.5 rounded-lg">
@@ -263,14 +257,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
                 <div className="relative z-10 pt-4">
                     <button
                         onClick={handleGenerateNextLesson}
-                        disabled={isGeneratingLesson || !lastLessonDone}
+                        disabled={isGeneratingLesson}
                         className={`
                             w-full group relative overflow-hidden rounded-2xl p-1
-                            ${isGeneratingLesson 
-                                ? 'cursor-wait opacity-80' 
-                                : !lastLessonDone
-                                    ? 'opacity-50 cursor-not-allowed grayscale'
-                                    : 'hover:scale-[1.02] transition-transform cursor-pointer'
+                            ${isGeneratingLesson
+                                ? 'cursor-wait opacity-80'
+                                : 'hover:scale-[1.02] transition-transform cursor-pointer'
                             }
                         `}
                     >
@@ -288,9 +280,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
                                     </div>
                                     <h3 className="text-xl font-bold text-white mb-1">Continuer l'aventure</h3>
                                     <p className="text-slate-400 text-sm text-center">Générer une nouvelle leçon sur mesure pour évoluer</p>
-                                    {!lastLessonDone && (
-                                        <p className="text-red-400 text-xs mt-2 font-bold bg-red-900/20 px-2 py-1 rounded">Terminez la dernière leçon d'abord !</p>
-                                    )}
                                 </>
                             )}
                         </div>

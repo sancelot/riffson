@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Lesson, InteractiveExercise, MIMMode, FretboardPosition, PluckFinger } from '../types';
-import { ArrowLeft, Mic, Eye, CheckCircle, Hand, Target, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Mic, Eye, CheckCircle, Hand, Target, RotateCcw, PlayCircle } from 'lucide-react';
 import { CHORD_NAMES_FR, FINGER_NAMES, PLUCK_FINGERS, STRING_NAMES_FR } from '../constants';
 import ReactMarkdown from 'react-markdown';
 import { autoCorrelate, getFrequencyFromPosition, getNoteNameFr, getPositionFromFrequency, GuitarSynth } from '../utils/audio';
@@ -476,12 +476,19 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, onBack, onComplete }) =
             <ReactMarkdown components={markdownComponents}>{lesson.content}</ReactMarkdown>
             {exercises.length > 1 && (
               <div className="not-prose bg-slate-900 border border-slate-700 rounded-2xl p-4 mt-6">
-                <p className="text-xs font-bold uppercase tracking-widest text-amber-400 mb-2">Votre parcours, étape par étape</p>
-                <ol className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-widest text-amber-400 mb-1">Votre parcours, étape par étape</p>
+                <p className="text-xs text-slate-500 mb-2">Commencez par l'étape 1, ou cliquez sur celle de votre choix.</p>
+                <ol className="space-y-1">
                   {exercises.map((ex, i) => (
-                    <li key={ex.id || i} className="flex gap-3 text-sm text-slate-300">
-                      <span className="shrink-0 w-6 h-6 rounded-full bg-slate-800 border border-slate-600 text-xs font-bold flex items-center justify-center">{i + 1}</span>
-                      <span>{ex.prompt}</span>
+                    <li key={ex.id || i}>
+                      <button
+                        onClick={() => setStage({ kind: 'exercise', index: i })}
+                        className="w-full flex gap-3 items-center text-left text-sm text-slate-300 rounded-lg px-2 py-1.5 hover:bg-slate-800 hover:text-white transition-colors"
+                      >
+                        <span className={`shrink-0 w-6 h-6 rounded-full border text-xs font-bold flex items-center justify-center ${scores[i] !== undefined ? 'bg-green-500/20 border-green-500 text-green-300' : 'bg-slate-800 border-slate-600'}`}>{i + 1}</span>
+                        <span className="flex-1">{ex.prompt}</span>
+                        <PlayCircle size={16} className="shrink-0 text-amber-400" />
+                      </button>
                     </li>
                   ))}
                 </ol>

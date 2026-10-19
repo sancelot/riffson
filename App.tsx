@@ -82,7 +82,15 @@ const App = () => {
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(updatedUser));
   };
 
-  const handleLessonComplete = (lessonId: string, score: number = 100) => {
+  // L'élève choisit librement son niveau (parcours affiché, coach, routines, leçons générées)
+  const handleLevelChange = (level: UserLevel) => {
+    if (!user || level === user.level) return;
+    const updatedUser = { ...user, level };
+    setUser(updatedUser);
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(updatedUser));
+  };
+
+  const handleLessonComplete =(lessonId: string, score: number = 100) => {
     if (!user) return;
     const now = Date.now();
 
@@ -105,7 +113,9 @@ const App = () => {
     const allCurrentCompleted = currentLevelLessons.length >= MIN_LESSONS_TO_LEVEL_UP &&
         currentLevelLessons.every(l => newCompletedLessons.includes(l.id));
 
-    if (allCurrentCompleted) {
+    // Seulement quand cette leçon vient d'être validée pour la première fois : l'élève peut
+    // revenir à un niveau déjà terminé et refaire des leçons sans repasser de niveau ni regagner les 500 XP
+    if (allCurrentCompleted && firstCompletion) {
         if (user.level === UserLevel.BEGINNER) {
             newLevel = UserLevel.INTERMEDIATE;
             leveledUp = true;
@@ -216,6 +226,7 @@ const App = () => {
                 user={user} 
                 onSelectLesson={handleLessonSelect} 
                 onAddLesson={handleLessonAdd}
+                onChangeLevel={handleLevelChange}
             />
         )}
         
