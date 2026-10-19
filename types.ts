@@ -19,6 +19,15 @@ export interface MelodyNote extends FretboardPosition {
     duration?: number; // en temps (1.0 = noire, 0.5 = croche)
     finger?: number;   // doigt main gauche (1 index ... 4 auriculaire), absent pour une corde à vide
     pluck?: PluckFinger; // doigt main droite : pouce, index, majeur, annulaire ou médiator
+    lyric?: string;      // syllabe chantée sur cette note (aide à reconnaître la mélodie)
+}
+
+/** Ce que l'élève saura jouer à la fin de la leçon : écouté au début, rejoué au bilan. */
+export interface LessonGoal {
+    title: string;
+    description?: string;
+    sequence: MelodyNote[];
+    tempo: number;
 }
 
 /**
@@ -70,7 +79,9 @@ export interface Lesson {
   content: string; 
   completed: boolean;
   duration: string; 
-  exercises?: InteractiveExercise[]; 
+  exercises?: InteractiveExercise[]; // étapes progressives, la dernière = l'objectif complet
+  goal?: LessonGoal;
+  recap?: string[]; // ce que l'élève a appris, affiché au bilan
   lastPlayed?: number; 
   masteryScore?: number; 
   isGenerated?: boolean; 

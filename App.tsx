@@ -9,6 +9,7 @@ import ChatTutor from './components/ChatTutor';
 import Tools from './components/Tools';
 import { Home, MessageSquare, BookOpen } from 'lucide-react';
 import { scheduleReview, streakAfterPractice } from './utils/progress';
+import { GuitarSynth } from './utils/audio';
 import { CHAT_STORAGE_KEY } from './components/ChatTutor';
 
 const MIN_LESSONS_TO_LEVEL_UP = 2;
@@ -18,6 +19,11 @@ const App = () => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
   const [showLevelUpModal, setShowLevelUpModal] = useState<boolean>(false);
+
+  // Filet de sécurité : aucun son (démo, riff, accord) ne survit à un changement de page
+  useEffect(() => {
+    GuitarSynth.stopAll();
+  }, [view, activeLesson]);
 
   // Load user from local storage on mount
   useEffect(() => {

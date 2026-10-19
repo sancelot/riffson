@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Lesson, InteractiveExercise, MIMMode, FretboardPosition, PluckFinger } from '../types';
-import { ArrowLeft, Mic, Eye, CheckCircle, Hand } from 'lucide-react';
+import { ArrowLeft, Mic, Eye, CheckCircle, Hand, Target, RotateCcw } from 'lucide-react';
 import { CHORD_NAMES_FR, FINGER_NAMES, PLUCK_FINGERS, STRING_NAMES_FR } from '../constants';
 import ReactMarkdown from 'react-markdown';
 import { autoCorrelate, getFrequencyFromPosition, getNoteNameFr, getPositionFromFrequency, GuitarSynth } from '../utils/audio';
 import Fretboard from './Fretboard';
 import ChordDiagram from './ChordDiagram';
+import RiffPlayer from './RiffPlayer';
 
 interface LessonViewProps {
   lesson: Lesson;
@@ -18,6 +19,7 @@ interface TargetNote extends FretboardPosition {
     duration: number; // en temps
     finger?: number;
     pluck?: PluckFinger;
+    lyric?: string;
 }
 
 /** Consigne complète d'une note : quelle corde, quelle case, avec quels doigts. */
@@ -51,7 +53,7 @@ const isSamePitch =(a: number, b: number) => Math.abs(1200 * Math.log2(a / b)) <
 const buildTargets = (exercise: InteractiveExercise): TargetNote[] => {
     const sequence = (exercise.sequence || [])
         .filter(n => n.fret >= 0)
-        .map(n => ({ string: n.string, fret: n.fret, duration: n.duration || 1.0, finger: n.finger, pluck: n.pluck, freq: getFrequencyFromPosition(n.string, n.fret) }))
+        .map(n => ({ string: n.string, fret: n.fret, duration: n.duration || 1.0, finger: n.finger, pluck: n.pluck, lyric: n.lyric, freq: getFrequencyFromPosition(n.string, n.fret) }))
         .filter(n => n.freq > 0);
     if (sequence.length > 0) return sequence;
     const posFreq = exercise.targetString ? getFrequencyFromPosition(exercise.targetString, exercise.targetFret ?? 0) : -1;
@@ -301,9 +303,11 @@ const InteractivePractice: React.FC<{ exercise: InteractiveExercise, onSuccess: 
                             const current = status !== 'success' && i === shownIndex;
                             return (
                                 <div key={i} title={describeNote(n)} className={`px-2 py-1 rounded-md text-xs border text-center ${done ? 'bg-green-500/20 border-green-500 text-green-300' : current ? 'bg-amber-500 border-white text-slate-900 font-black' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>
+                                    {n.lyric && <div className="italic text-[11px] mb-0.5">« {n.lyric} »</div>}
                                     <div className="font-bold">{getNoteNameFr(n.string, n.fret)}</div>
                                     <div className="font-mono text-[10px]">corde {n.string} · {n.fret === 0 ? 'à vide' : `case ${n.fret}`}</div>
-                                    {n.pluck && <div className="text-[10px]">{PLUCK_FINGERS[n.pluck]}</div>}
+                                    {n.fret > 0 && n.finger && <div className="text-[10px]">main g. : {FINGER_NAMES[n.finger]}</div>}
+                                    {n.pluck && <div className="text-[10px]">main d. : {PLUCK_FINGERS[n.pluck]}</div>}
                                 </div>
                             );
                         })}
@@ -355,19 +359,130 @@ const InteractivePractice: React.FC<{ exercise: InteractiveExercise, onSuccess: 
     );
 };
 
-const LessonView: React.FC<LessonViewProps> = ({ lesson, onBack, onComplete }) => {
-  // -1 = théorie de la leçon, puis index de l'exercice
-  const [step, setStep] = useState(-1);
-  const exercises = lesson.exercises || [];
-  const exercise = step >= 0 ? exercises[step] : undefined;
-  const [scores, setScores] = useState<number[]>([]);
+type LessonStage =
+  | { kind: 'intro' }
+  | { kind: 'exercise', index: number }
+  | { kind: 'stepDone', index: number, score: number }
+  | { kind: 'recap' };
 
-  // Score de la leçon = moyenne des exercices (sert à la maîtrise et aux révisions)
-  const handleExerciseSuccess = (score: number) => {
-    const allScores = [...scores, score];
-    setScores(allScores);
-    if (step < exercises.length - 1) setStep(step + 1);
-    else onComplete(lesson.id, Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length));
+const averageScore = (scores: number[]) => scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 100;
+
+const markdownComponents = {
+    p: ({ children }: { children?: React.ReactNode }) => {
+        if (typeof children === 'string' && children.trim().match(/^\[[a-zA-Z0-9#]+\]$/)) return <ChordDiagram chordName={children.trim()} />;
+        return <p>{children}</p>;
+    }
+};
+
+const LessonView: React.FC<LessonViewProps> = ({ lesson, onBack, onComplete }) => {
+  const [stage, setStage] = useState<LessonStage>({ kind: 'intro' });
+  const exercises = lesson.exercises || [];
+  // Meilleur score par étape (une étape refaite remplace l'ancien score)
+  const [scores, setScores] = useState<Record<number, number>>({});
+  const lessonScore = averageScore(Object.values(scores));
+
+  const handleExerciseSuccess = (index: number, score: number) => {
+    setScores(prev => ({ ...prev, [index]: Math.max(prev[index] ?? 0, score) }));
+    setStage(index < exercises.length - 1 ? { kind: 'stepDone', index, score } : { kind: 'recap' });
+  };
+
+  const headerRight = stage.kind === 'exercise' || stage.kind === 'stepDone'
+    ? `Étape ${stage.index + 1}/${exercises.length}`
+    : '';
+
+  // Le morceau visé : écouté avant de commencer, rejoué au bilan
+  const renderGoal = (heading: string) => lesson.goal && (
+    <div className="not-prose my-4 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4">
+      <p className="text-amber-400 font-bold flex items-center gap-2"><Target size={18} /> {heading}</p>
+      <RiffPlayer title={lesson.goal.title} description={lesson.goal.description} sequence={lesson.goal.sequence} tempo={lesson.goal.tempo} />
+    </div>
+  );
+
+  const renderBody = () => {
+    switch (stage.kind) {
+      case 'exercise': {
+        const exercise = exercises[stage.index];
+        return <InteractivePractice key={`${exercise.id}-${stage.index}`} exercise={exercise} onSuccess={(score) => handleExerciseSuccess(stage.index, score)} />;
+      }
+
+      case 'stepDone': {
+        const next = exercises[stage.index + 1];
+        return (
+          <div className="h-full overflow-y-auto p-6 flex flex-col items-center justify-center text-center gap-4">
+            <CheckCircle size={56} className="text-green-400" />
+            <h2 className="text-2xl font-black text-white">Étape {stage.index + 1} réussie ! ({stage.score}%)</h2>
+            <p className="text-slate-300 max-w-lg">Étape suivante : <span className="font-bold text-white">{next.prompt}</span></p>
+            {next.contextExplanation && <p className="text-slate-400 text-sm max-w-lg">{next.contextExplanation}</p>}
+            <div className="flex gap-3 mt-2">
+              <button onClick={() => setStage({ kind: 'exercise', index: stage.index })} className="bg-slate-700 text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2">
+                <RotateCcw size={18} /> Refaire
+              </button>
+              <button onClick={() => setStage({ kind: 'exercise', index: stage.index + 1 })} className="bg-amber-500 text-slate-900 font-black py-3 px-6 rounded-xl">
+                Continuer
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      case 'recap':
+        return (
+          <div className="p-6 h-full overflow-y-auto pb-32 max-w-3xl mx-auto">
+            <div className="text-center mb-4">
+              <div className="text-5xl mb-2">🎸</div>
+              <h2 className="text-2xl font-black text-white">
+                {lesson.goal ? `Vous venez de jouer ${lesson.goal.title} !` : 'Leçon terminée !'}
+              </h2>
+              <p className="text-slate-400">Score de la leçon : {lessonScore}%</p>
+            </div>
+            {renderGoal('Réécoutez ce que vous savez maintenant jouer')}
+            {lesson.recap && lesson.recap.length > 0 && (
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4 my-4">
+                <p className="text-xs font-bold uppercase tracking-widest text-amber-400 mb-2">Ce que vous avez appris</p>
+                <ul className="space-y-1 text-slate-300 text-sm list-disc pl-5">
+                  {lesson.recap.map((item, i) => <li key={i}>{item}</li>)}
+                </ul>
+              </div>
+            )}
+            <div className="flex gap-3">
+              <button onClick={() => setStage({ kind: 'exercise', index: exercises.length - 1 })} className="flex-1 bg-slate-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2">
+                <RotateCcw size={18} /> Rejouer le morceau
+              </button>
+              <button onClick={() => onComplete(lesson.id, lessonScore)} className="flex-1 bg-amber-500 text-slate-900 font-black py-4 rounded-xl">
+                TERMINER LA LEÇON
+              </button>
+            </div>
+          </div>
+        );
+
+      default:
+        return (
+          <div className="p-6 prose prose-invert max-w-none h-full overflow-y-auto pb-32">
+            {renderGoal('À la fin de cette leçon, vous saurez jouer :')}
+            <ReactMarkdown components={markdownComponents}>{lesson.content}</ReactMarkdown>
+            {exercises.length > 1 && (
+              <div className="not-prose bg-slate-900 border border-slate-700 rounded-2xl p-4 mt-6">
+                <p className="text-xs font-bold uppercase tracking-widest text-amber-400 mb-2">Votre parcours, étape par étape</p>
+                <ol className="space-y-2">
+                  {exercises.map((ex, i) => (
+                    <li key={ex.id || i} className="flex gap-3 text-sm text-slate-300">
+                      <span className="shrink-0 w-6 h-6 rounded-full bg-slate-800 border border-slate-600 text-xs font-bold flex items-center justify-center">{i + 1}</span>
+                      <span>{ex.prompt}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {exercises.length > 0 ? (
+              <button onClick={() => setStage({ kind: 'exercise', index: 0 })} className="w-full bg-amber-500 text-slate-900 font-bold py-4 rounded-xl mt-8">
+                {exercises.length > 1 ? "COMMENCER L'ÉTAPE 1" : 'PASSER À LA PRATIQUE'}
+              </button>
+            ) : (
+              <button onClick={() => onComplete(lesson.id, 100)} className="w-full bg-amber-500 text-slate-900 font-bold py-4 rounded-xl mt-8">TERMINER</button>
+            )}
+          </div>
+        );
+    }
   };
 
   return (
@@ -375,28 +490,10 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, onBack, onComplete }) =
         <div className="bg-slate-900 p-4 flex items-center justify-between border-b border-slate-800">
             <button onClick={onBack} className="p-2 text-slate-400 hover:text-white" aria-label="Retour"><ArrowLeft /></button>
             <h1 className="text-white font-bold">{lesson.title}</h1>
-            <div className="w-8 text-xs text-slate-500 text-right">{exercise ? `${step + 1}/${exercises.length}` : ''}</div>
+            <div className="min-w-8 text-xs text-slate-500 text-right">{headerRight}</div>
         </div>
         <div className="flex-1 overflow-hidden">
-            {exercise ? (
-                <InteractivePractice key={exercise.id || step} exercise={exercise} onSuccess={handleExerciseSuccess} />
-            ) : (
-                <div className="p-6 prose prose-invert max-w-none h-full overflow-y-auto pb-32">
-                    <ReactMarkdown components={{
-                        p: ({children}) => {
-                            if (typeof children === 'string' && children.trim().match(/^\[[a-zA-Z0-9#]+\]$/)) return <ChordDiagram chordName={children.trim()} />;
-                            return <p>{children}</p>;
-                        }
-                    }}>{lesson.content}</ReactMarkdown>
-                    {exercises.length > 0 ? (
-                        <button onClick={() => setStep(0)} className="w-full bg-amber-500 text-slate-900 font-bold py-4 rounded-xl mt-8">
-                            PASSER À LA PRATIQUE ({exercises.length} exercice{exercises.length > 1 ? 's' : ''})
-                        </button>
-                    ) : (
-                        <button onClick={() => onComplete(lesson.id, 100)} className="w-full bg-amber-500 text-slate-900 font-bold py-4 rounded-xl mt-8">TERMINER</button>
-                    )}
-                </div>
-            )}
+            {renderBody()}
         </div>
     </div>
   );

@@ -72,28 +72,41 @@ const lessonSchema = {
     description: { type: Type.STRING },
     content: { type: Type.STRING },
     duration: { type: Type.STRING },
+    goalTitle: { type: Type.STRING },       // le morceau visé, ex : « Frère Jacques »
+    goalDescription: { type: Type.STRING },
+    recap: { type: Type.ARRAY, items: { type: Type.STRING } },
     exercises: {
       type: Type.ARRAY,
       items: {
         type: Type.OBJECT,
         properties: {
           prompt: { type: Type.STRING },
-          targetNote: { type: Type.STRING },
-          targetFrequency: { type: Type.NUMBER },
-          duration_sec: { type: Type.NUMBER },
-          targetString: { type: Type.NUMBER },
-          targetFret: { type: Type.NUMBER },
-          finger: { type: Type.NUMBER },
+          contextExplanation: { type: Type.STRING },
           leftHand: { type: Type.STRING },
           rightHand: { type: Type.STRING },
           chord: { type: Type.STRING },
+          tempo: { type: Type.NUMBER },
+          sequence: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                string: { type: Type.NUMBER },
+                fret: { type: Type.NUMBER },
+                duration: { type: Type.NUMBER },
+                finger: { type: Type.NUMBER },
+                lyric: { type: Type.STRING }
+              },
+              required: ['string', 'fret', 'duration']
+            }
+          },
           songTitle: { type: Type.STRING }
         },
-        required: ['prompt', 'targetNote', 'targetFrequency', 'targetString', 'targetFret', 'leftHand', 'rightHand']
+        required: ['prompt', 'contextExplanation', 'leftHand', 'rightHand', 'tempo', 'sequence']
       }
     }
   },
-  required: ['title', 'description', 'content', 'duration']
+  required: ['title', 'description', 'content', 'duration', 'goalTitle', 'recap', 'exercises']
 };
 
 const scanSchema = {
@@ -147,8 +160,19 @@ Inclus des exercices techniques, un concept de théorie et un riff à pratiquer.
       contents: `Crée une nouvelle leçon de guitare stimulante pour un niveau ${level(body.level)}.
 Les leçons déjà apprises sont : ${titles.join(', ') || 'aucune'}.
 La leçon doit être inédite. Inclus un titre, une description, un contenu pédagogique en markdown,
-et des exercices interactifs (une note par exercice, avec corde 1-6 et case 0-12).
+et des exercices interactifs (corde 1-6, case 0-12).
 Pour les accords, utilise le format [NOM_ACCORD] sur une ligne seule, entouré de lignes vides.
+
+STRUCTURE OBLIGATOIRE : la leçon vise un MORCEAU RECONNAISSABLE que l'élève connaît déjà.
+- Choisis une mélodie dont tu connais les notes avec certitude : de préférence une chanson du domaine public
+  (comptine, chant traditionnel, thème classique célèbre), sinon un riff très connu et court. Jamais de notes approximatives :
+  à la fin, l'élève doit pouvoir dire « ah oui, c'est ce morceau ».
+- "goalTitle" = le nom du morceau ; "goalDescription" = quel passage est joué.
+- "exercises" = 3 à 5 étapes progressives, chacune avec sa "sequence" de notes (string, fret, duration en temps : 1 = noire,
+  0.5 = croche ; "lyric" = syllabe chantée si le morceau a des paroles) et son "tempo" :
+  d'abord les notes isolées, puis des fragments de phrase, et la DERNIÈRE étape = le passage complet au tempo du morceau.
+- Le rythme doit être celui du morceau : c'est lui qui le rend reconnaissable.
+- "recap" = 3 ou 4 phrases sur ce que l'élève a appris.
 
 RÈGLES PÉDAGOGIQUES (l'élève peut être totalement novice) :
 - Nomme toujours un accord en entier la première fois (ex : « Mi mineur (Em) ») et cite ses notes.

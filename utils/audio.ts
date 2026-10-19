@@ -186,6 +186,15 @@ class GuitarSynthEngine {
         this.activeSources.clear();
     }
 
+    /** Arrête tout et libère l'AudioContext (rechargement à chaud du module). */
+    dispose() {
+        this.stopAll();
+        this.ctx?.close();
+        this.ctx = null;
+        this.output = null;
+        this.cache.clear();
+    }
+
     /** Gratte un accord (frets de la corde grave à l'aiguë), comme un coup de pouce vers le bas. */
     playChord(frets: number[], volume: number = 0.3) {
         const ctx = this.init();
@@ -227,6 +236,13 @@ class GuitarSynthEngine {
 }
 
 export const GuitarSynth = new GuitarSynthEngine();
+
+// En développement, Vite recharge ce module à chaud : l'ancien moteur et son AudioContext
+// continueraient de jouer les notes déjà programmées, hors de portée du nouveau stopAll().
+// Le nouveau moteur arrête donc l'éventuel précédent (enregistré sur globalThis).
+const SYNTH_KEY = '__gibsonGuitarSynth';
+(globalThis as any)[SYNTH_KEY]?.dispose();
+(globalThis as any)[SYNTH_KEY] = GuitarSynth;
 
 const NOTE_NAMES_FR = ['Do', 'Do#', 'Ré', 'Ré#', 'Mi', 'Fa', 'Fa#', 'Sol', 'Sol#', 'La', 'La#', 'Si'];
 const OPEN_STRING_MIDI_LOW_TO_HIGH = [40, 45, 50, 55, 59, 64]; // Mi grave ... Mi aigu

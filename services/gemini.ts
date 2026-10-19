@@ -2,7 +2,7 @@
 // (server/gemini-api.mjs), qui détient la clé Gemini.
 import { CHORD_DEFINITIONS, INITIAL_LESSONS } from '../constants';
 import { UserLevel, UserProfile, Lesson, InteractiveExercise, ChatMessage } from '../types';
-import { getFrequencyFromPosition } from '../utils/audio';
+import { getFrequencyFromPosition, getNoteNameFr } from '../utils/audio';
 
 const callApi = async <T>(route: string, body: unknown): Promise<T> => {
   const response = await fetch(`/api/${route}`, {
@@ -49,7 +49,15 @@ export const sendMessageToAI = async (user: UserProfile, history: ChatMessage[],
  * Fixe l'id et recalcule la fréquence depuis corde/case quand elles sont valides
  * (la fréquence renvoyée par l'IA est souvent incohérente avec la position).
  */
-const normalizeExercise = (ex: InteractiveExercise, id: string): InteractiveExercise => {
+const normalizeExercise = (raw: InteractiveExercise, id: string): InteractiveExercise => {
+  // Notes hors du manche ou durées absurdes : écartées plutôt que de bloquer l'exercice
+  const sequence = (raw.sequence || []).filter(n =>
+    Number.isInteger(n.string) && n.string >= 1 && n.string <= 6 &&
+    Number.isInteger(n.fret) && n.fret >= 0 && n.fret <= 22 && n.duration! > 0 && n.duration! <= 8);
+  const first = sequence[0];
+  const ex: InteractiveExercise = first
+    ? { ...raw, sequence, targetString: first.string, targetFret: first.fret, targetNote: getNoteNameFr(first.string, first.fret) }
+    : { ...raw, sequence: undefined };
   const freq = ex.targetString ? getFrequencyFromPosition(ex.targetString, ex.targetFret ?? 0) : -1;
   return {
     ...ex,
@@ -72,10 +80,21 @@ export const generateNextLesson = async (userLevel: UserLevel, existingTitles: s
   if (!lesson || typeof lesson.title !== 'string' || typeof lesson.content !== 'string') return null;
   // Identifiant local unique : celui de l'IA ("lesson_1"...) peut entrer en collision avec une leçon existante
   const id = `gen_${Date.now()}`;
+  const exercises: InteractiveExercise[] = (lesson.exercises || [])
+    .map((ex: InteractiveExercise, i: number) => normalizeExercise(ex, `${id}_ex${i}`))
+    .filter((ex: InteractiveExercise) => ex.targetString);
+  if (exercises.length === 0) return null;
+  // La dernière étape est le passage complet : c'est le morceau visé
+  const finalStep = exercises[exercises.length - 1];
+  const { goalTitle, goalDescription, ...lessonFields } = lesson;
   return {
-    ...lesson,
+    ...lessonFields,
     id,
-    exercises: (lesson.exercises || []).map((ex: InteractiveExercise, i: number) => normalizeExercise(ex, `${id}_ex${i}`)),
+    exercises,
+    goal: finalStep.sequence && goalTitle
+      ? { title: `« ${goalTitle} »`, description: goalDescription, sequence: finalStep.sequence, tempo: finalStep.tempo || 100 }
+      : undefined,
+    recap: Array.isArray(lesson.recap) ? lesson.recap.filter((r: unknown) => typeof r === 'string') : undefined,
     level: userLevel,
     completed: false,
     isGenerated: true,
