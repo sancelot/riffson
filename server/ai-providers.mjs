@@ -317,18 +317,25 @@ const readOllamaStream = async (config, url, body) => {
 
 const ollama = {
   async generate(config, { system, messages, schema }) {
-    return readOllamaStream(config, `${baseUrl(config)}/api/chat`, {
+    const request = (think) => readOllamaStream(config, `${baseUrl(config)}/api/chat`, {
       model: config.model,
       stream: true,
-      // Ollama contraint la sortie sur un JSON Schema passé dans `format`. Pour ces sorties structurées
-      // (leçons, scanner), la « réflexion » des modèles qui en ont une (qwen3…) allonge la génération
-      // d'environ 25 % sans meilleur résultat : on la coupe. Les modèles sans réflexion ignorent l'option.
-      ...(schema ? { format: schema, think: false } : {}),
+      // Ollama contraint la sortie sur un JSON Schema passé dans `format`
+      ...(schema ? { format: schema } : {}),
+      ...(think === false ? { think: false } : {}),
       messages: [
         ...(system ? [{ role: 'system', content: system }] : []),
         ...messages.map(m => ({ role: m.role, content: m.text, ...(m.image ? { images: [m.image.data] } : {}) })),
       ],
     });
+    // Sorties structurées (leçons, scanner) : la « réflexion » des modèles qui en ont une (qwen3…)
+    // allonge la génération d'environ 25 % sans meilleur résultat, on la coupe.
+    // Les modèles sans réflexion ignorent l'option.
+    if (schema) return request(false);
+    // Coach : on garde la réflexion, mais certains modèles (qwen3.5…) réfléchissent jusqu'à remplir
+    // leur contexte sans jamais répondre ; on redemande alors une réponse directe.
+    const reply = await request();
+    return reply.trim() ? reply : request(false);
   },
   async listModels(config) {
     const data = await fetchJson(config, `${baseUrl(config)}/api/tags`, {});

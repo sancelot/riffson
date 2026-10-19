@@ -9,10 +9,29 @@ export const SETTINGS_FILE = path.join(root, '.riffson-ai.json');
 // Nom du fichier avant que le projet ne s'appelle Riffson
 const LEGACY_SETTINGS_FILE = path.join(root, '.gibson-ai.json');
 
-/** Reprend les réglages (et les clés) enregistrés sous l'ancien nom du projet. */
+/**
+ * Reprend les réglages enregistrés sous l'ancien nom du projet. Si les deux fichiers existent
+ * (l'app a déjà écrit le nouveau), on récupère les clés absentes du nouveau avant de supprimer l'ancien.
+ */
 const migrateLegacySettings = () => {
-  if (!fs.existsSync(SETTINGS_FILE) && fs.existsSync(LEGACY_SETTINGS_FILE)) {
+  if (!fs.existsSync(LEGACY_SETTINGS_FILE)) return;
+  if (!fs.existsSync(SETTINGS_FILE)) {
     fs.renameSync(LEGACY_SETTINGS_FILE, SETTINGS_FILE);
+    return;
+  }
+  try {
+    const legacy = JSON.parse(fs.readFileSync(LEGACY_SETTINGS_FILE, 'utf8'));
+    const current = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    current.providers = current.providers || {};
+    for (const [id, entry] of Object.entries(legacy.providers || {})) {
+      if (entry?.apiKey && !current.providers[id]?.apiKey) {
+        current.providers[id] = { ...entry, ...current.providers[id], apiKey: entry.apiKey };
+      }
+    }
+    saveSettings(current);
+    fs.unlinkSync(LEGACY_SETTINGS_FILE);
+  } catch (e) {
+    console.error('[ai-settings] Migration de .gibson-ai.json impossible, fichier conservé :', e.message);
   }
 };
 
