@@ -99,27 +99,41 @@ const InteractivePractice: React.FC<{ exercise: InteractiveExercise, onSuccess: 
         if (mimMode !== 'demo') return;
         const timers: number[] = [];
         const later = (fn: () => void, ms: number) => { timers.push(window.setTimeout(fn, ms)); };
+        let frame: number | null = null;
 
         const playDemo = () => {
             setDemoPhase('setup');
             setActiveSequenceNote(null);
             later(() => {
                 setDemoPhase('playing');
-                const beatMs = 60000 / tempo;
-                const totalSec = GuitarSynth.playMelody(targets, tempo);
-                let t = 50; // playMelody démarre avec 50 ms d'avance
-                targets.forEach(note => {
-                    later(() => setActiveSequenceNote(note), t);
-                    t += note.duration * beatMs;
-                });
-                later(() => setActiveSequenceNote(null), totalSec * 1000 + 50);
-                later(playDemo, totalSec * 1000 + 2500);
+                const { noteTimes, startTime, duration } = GuitarSynth.playMelody(targets, tempo);
+                const endTime = startTime + duration;
+                // La note affichée suit l'horloge audio : toujours en phase avec le son,
+                // même au premier lancement où l'audio démarre avec un léger retard
+                let shown = -1;
+                const follow = () => {
+                    const now = GuitarSynth.currentTime;
+                    if (now >= endTime) {
+                        setActiveSequenceNote(null);
+                        later(playDemo, 2500);
+                        return;
+                    }
+                    let index = -1;
+                    while (index + 1 < noteTimes.length && noteTimes[index + 1] <= now) index++;
+                    if (index !== shown) {
+                        shown = index;
+                        setActiveSequenceNote(index >= 0 ? targets[index] : null);
+                    }
+                    frame = requestAnimationFrame(follow);
+                };
+                frame = requestAnimationFrame(follow);
             }, 1500);
         };
         playDemo();
 
         return () => {
             timers.forEach(clearTimeout);
+            if (frame) cancelAnimationFrame(frame);
             GuitarSynth.stopAll();
         };
     }, [mimMode, targets, tempo]);

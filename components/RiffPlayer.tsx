@@ -11,7 +11,10 @@ interface RiffPlayerProps {
     description?: string;
 }
 
-const RiffPlayer: React.FC<RiffPlayerProps> = ({ title, sequence, tempo = 100, description }) => {
+const NOTES_OFFSET = 56; // largeur des noms de cordes, avant la première note
+const TAB_PADDING = 16;  // marge intérieure (p-4) du conteneur qui défile
+
+const RiffPlayer: React.FC<RiffPlayerProps> =({ title, sequence, tempo = 100, description }) => {
     const [isPlaying, setIsPlaying] = useState(false);
     const [playheadX, setPlayheadX] = useState(0);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -30,20 +33,32 @@ const RiffPlayer: React.FC<RiffPlayerProps> = ({ title, sequence, tempo = 100, d
     const totalDurationRatio = sequence.reduce((acc, note) => acc + (note.duration || 1.0), 0);
     const totalWidth = totalDurationRatio * beatWidth;
 
+    // Fait défiler la tablature pour garder le curseur dans la zone visible
+    const followPlayhead = (x: number) => {
+        const container = containerRef.current;
+        if (!container) return;
+        const position = TAB_PADDING + NOTES_OFFSET + x;
+        if (position > container.scrollLeft + container.clientWidth * 0.65) {
+            container.scrollLeft = position - container.clientWidth * 0.35;
+        }
+    };
+
     const handlePlay = () => {
         if (isPlaying) return;
         setIsPlaying(true);
         setPlayheadX(0);
-        
-        const totalDurationMs = GuitarSynth.playMelody(sequence, tempo) * 1000;
-        const startTime = Date.now();
+        if (containerRef.current) containerRef.current.scrollLeft = 0;
+
+        // Le curseur suit l'horloge audio, pas l'horloge de la page : au premier clic, le son
+        // démarre avec un léger retard (création du contexte audio) et le curseur l'attend.
+        const { startTime, duration } = GuitarSynth.playMelody(sequence, tempo);
 
         const animate = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = elapsed / totalDurationMs;
-            
+            const progress = Math.max(0, (GuitarSynth.currentTime - startTime) / duration);
             if (progress < 1) {
-                setPlayheadX(progress * totalWidth);
+                const x = progress * totalWidth;
+                setPlayheadX(x);
+                followPlayhead(x);
                 frameRef.current = requestAnimationFrame(animate);
             } else {
                 setPlayheadX(0);
@@ -77,7 +92,7 @@ const RiffPlayer: React.FC<RiffPlayerProps> = ({ title, sequence, tempo = 100, d
             {/* Tablature à 6 lignes */}
             <div 
                 ref={containerRef}
-                className="relative bg-slate-900/50 rounded-2xl p-4 border border-slate-800/50 overflow-x-auto no-scrollbar"
+                className="relative bg-slate-900/50 rounded-2xl p-4 border border-slate-800/50 overflow-x-auto"
             >
                 <div 
                     className="relative" 
@@ -93,7 +108,7 @@ const RiffPlayer: React.FC<RiffPlayerProps> = ({ title, sequence, tempo = 100, d
 
                     {/* Les Notes */}
                     {(() => {
-                        let currentX = 56;
+                        let currentX = NOTES_OFFSET;
                         return sequence.map((note, idx) => {
                             const x = currentX;
                             const y = (note.string - 1) * 24 + 10;
@@ -114,9 +129,9 @@ const RiffPlayer: React.FC<RiffPlayerProps> = ({ title, sequence, tempo = 100, d
                                     }}
                                 >
                                     {note.lyric && (
-                                        <span className={`absolute text-xs whitespace-nowrap ${isPlaying && playheadX + 56 >= x && playheadX + 56 < x + duration * beatWidth ? 'text-amber-400 font-bold' : 'text-slate-400'}`} style={{ top: `${160 - y}px` }}>{note.lyric}</span>
+                                        <span className={`absolute text-xs whitespace-nowrap ${isPlaying && playheadX + NOTES_OFFSET >= x && playheadX + NOTES_OFFSET < x + duration * beatWidth ? 'text-amber-400 font-bold' : 'text-slate-400'}`} style={{ top: `${160 - y}px` }}>{note.lyric}</span>
                                     )}
-                                    <div className={`w-6 h-6 rounded-md flex items-center justify-center border font-black text-xs ${isPlaying && playheadX + 56 >= x && playheadX + 56 < x + duration * beatWidth ? 'bg-amber-500 border-white text-slate-900 scale-125 z-20 shadow-[0_0_15px_#f59e0b]' : 'bg-slate-950 border-slate-700 text-slate-300'}`}>
+                                    <div className={`w-6 h-6 rounded-md flex items-center justify-center border font-black text-xs ${isPlaying && playheadX + NOTES_OFFSET >= x && playheadX + NOTES_OFFSET < x + duration * beatWidth ? 'bg-amber-500 border-white text-slate-900 scale-125 z-20 shadow-[0_0_15px_#f59e0b]' : 'bg-slate-950 border-slate-700 text-slate-300'}`}>
                                         {note.fret}
                                     </div>
                                 </div>
@@ -128,7 +143,7 @@ const RiffPlayer: React.FC<RiffPlayerProps> = ({ title, sequence, tempo = 100, d
                     {isPlaying && (
                         <div 
                             className="absolute top-0 bottom-0 w-[2px] bg-red-500 z-10 shadow-[0_0_10px_#ef4444]"
-                            style={{ left: `${playheadX + 56}px` }}
+                            style={{ left: `${playheadX + NOTES_OFFSET}px` }}
                         >
                             <div className="w-2 h-2 bg-red-500 rounded-full -ml-[3px] -mt-1"></div>
                         </div>

@@ -113,6 +113,15 @@ const renderPluckedString = (ctx: BaseAudioContext, freq: number): AudioBuffer =
     return buffer;
 };
 
+const MELODY_LEAD_SECONDS = 0.1; // marge entre la programmation et la première note
+
+/** Calendrier d'une mélodie, en secondes sur l'horloge audio (GuitarSynth.currentTime). */
+export interface MelodyTiming {
+    startTime: number;
+    duration: number;
+    noteTimes: number[];
+}
+
 interface PlayingNote {
     source: AudioBufferSourceNode;
     gain: GainNode;
@@ -207,17 +216,34 @@ class GuitarSynthEngine {
         });
     }
 
-    /** Joue la séquence et renvoie sa durée totale en secondes. */
-    playMelody(sequence: {string: number, fret: number, duration?: number}[], tempo: number = 100): number {
+    /** Horloge audio (secondes) : la référence pour synchroniser une animation avec le son. */
+    get currentTime(): number {
+        return this.ctx?.currentTime ?? 0;
+    }
+
+    /**
+     * Joue la séquence. Renvoie l'instant de départ et celui de chaque note sur l'horloge audio
+     * (`currentTime`) : une animation calée dessus reste en phase même si le son démarre en retard
+     * (création de l'AudioContext, calcul des premières notes).
+     */
+    playMelody(sequence: {string: number, fret: number, duration?: number}[], tempo: number = 100): MelodyTiming {
         const ctx = this.init();
         if (!Number.isFinite(tempo) || tempo <= 0) tempo = 100;
         const beatDuration = 60 / tempo;
-        let currentTime = ctx.currentTime + 0.05;
+        // Calcule les notes avant de fixer l'heure de départ : sinon ce calcul retarde les premières notes
+        sequence.forEach(n => {
+            const freq = getFrequencyFromPosition(n.string, n.fret);
+            if (freq > 0) this.bufferFor(ctx, freq);
+        });
+        const startTime = ctx.currentTime + MELODY_LEAD_SECONDS;
+        let currentTime = startTime;
+        const noteTimes: number[] = [];
         // Une corde ne joue qu'une note à la fois : la rejouer étouffe la note précédente,
         // alors que les autres cordes continuent de résonner (arpèges)
         const ringingByString = new Map<number, PlayingNote>();
 
         sequence.forEach((note) => {
+            noteTimes.push(currentTime);
             // duration est exprimé en ratio de temps (1.0 = une noire)
             const noteLength = (note.duration || 1.0) * beatDuration;
             const freq = getFrequencyFromPosition(note.string, note.fret);
@@ -231,7 +257,7 @@ class GuitarSynthEngine {
             }
             currentTime += noteLength;
         });
-        return sequence.reduce((acc, n) => acc + (n.duration || 1.0), 0) * beatDuration;
+        return { startTime, duration: currentTime - startTime, noteTimes };
     }
 }
 
