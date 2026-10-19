@@ -1,7 +1,10 @@
 {
   "name": "guitarhero-ai-coach--v1",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Coach de guitare avec IA : leçons guidées sur des morceaux connus, validation au micro, IA au choix (Gemini, Claude, Mistral, Ollama, Hugging Face).",
+  "license": "MIT",
+  "author": "Stéphane Ancelot",
   "type": "module",
   "scripts": {
     "dev": "vite",

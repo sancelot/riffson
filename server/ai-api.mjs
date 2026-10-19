@@ -132,7 +132,7 @@ const routes = {
       text: text(m.text, 'history.text')
     }));
     messages.push({ role: 'user', text: text(body.message, 'message') });
-    const studentContext = typeof body.studentContext === 'string' ? body.studentContext.slice(0, 4000) : '';
+    const studentContext = typeof body.studentContext === 'string' ? body.studentContext.slice(0, 8000) : '';
     const reply = await generate(cfg, { system: `${COACH_INSTRUCTION}\n\n${studentContext}`, messages, effort: 'low' });
     return { text: reply };
   },
