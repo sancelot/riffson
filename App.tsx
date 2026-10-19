@@ -11,7 +11,7 @@ import Settings from './components/Settings';
 import { Home, MessageSquare, BookOpen, Settings as SettingsIcon } from 'lucide-react';
 import { scheduleReview, streakAfterPractice } from './utils/progress';
 import { GuitarSynth } from './utils/audio';
-import { CHAT_STORAGE_KEY } from './components/ChatTutor';
+import { CHAT_STORAGE_KEY, PROFILE_STORAGE_KEY, readStorage, removeStorage } from './utils/storage';
 
 const MIN_LESSONS_TO_LEVEL_UP = 2;
 
@@ -29,7 +29,7 @@ const App = () => {
   // Load user from local storage on mount
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem('guitar_hero_user');
+      const savedUser = readStorage(PROFILE_STORAGE_KEY);
       if (savedUser) {
         const parsed = JSON.parse(savedUser);
         // Complète les champs manquants des profils enregistrés par d'anciennes versions
@@ -61,9 +61,9 @@ const App = () => {
       lessonReviews: {}
     };
     // Nouveau profil : on ne garde pas la conversation du profil précédent
-    localStorage.removeItem(CHAT_STORAGE_KEY);
+    removeStorage(CHAT_STORAGE_KEY);
     setUser(newUser);
-    localStorage.setItem('guitar_hero_user', JSON.stringify(newUser));
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(newUser));
     setView(AppView.DASHBOARD);
   };
 
@@ -79,7 +79,7 @@ const App = () => {
         generatedLessons: [...(user.generatedLessons || []), newLesson]
     };
     setUser(updatedUser);
-    localStorage.setItem('guitar_hero_user', JSON.stringify(updatedUser));
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(updatedUser));
   };
 
   const handleLessonComplete = (lessonId: string, score: number = 100) => {
@@ -134,7 +134,7 @@ const App = () => {
     };
     
     setUser(updatedUser);
-    localStorage.setItem('guitar_hero_user', JSON.stringify(updatedUser));
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(updatedUser));
     setActiveLesson(null);
     setView(AppView.DASHBOARD);
 

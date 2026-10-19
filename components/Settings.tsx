@@ -189,13 +189,13 @@ const Settings: React.FC = () => {
             <label className="text-sm font-bold text-slate-300 mb-1 block">Modèle</label>
             <div className="flex gap-2">
               <input
-                list="gibson-model-choices"
+                list="riffson-model-choices"
                 value={model}
                 onChange={e => setModel(e.target.value)}
                 placeholder={meta.defaultModel || 'nom du modèle'}
                 className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-sm focus:ring-2 focus:ring-amber-500 outline-none"
               />
-              <datalist id="gibson-model-choices">
+              <datalist id="riffson-model-choices">
                 {modelChoices.map(m => <option key={m} value={m} />)}
               </datalist>
               <button onClick={handleListModels} disabled={busy !== null} className="px-3 rounded-lg bg-slate-700 text-slate-200 text-sm font-bold flex items-center gap-1 whitespace-nowrap">
@@ -236,8 +236,8 @@ const Settings: React.FC = () => {
         </div>
 
         <p className="text-xs text-slate-500 leading-relaxed">
-          Les clés sont enregistrées sur cet ordinateur, dans le fichier <code>.gibson-ai.json</code> du projet (exclu de git),
-          et ne sont jamais renvoyées au navigateur. Ces réglages ne sont modifiables que depuis l'ordinateur qui fait tourner Gibson.
+          Les clés sont enregistrées sur cet ordinateur, dans le fichier <code>.riffson-ai.json</code> du projet (exclu de git),
+          et ne sont jamais renvoyées au navigateur. Ces réglages ne sont modifiables que depuis l'ordinateur qui fait tourner Riffson.
         </p>
       </div>
     </div>

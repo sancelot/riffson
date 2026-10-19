@@ -1,5 +1,5 @@
 {
-  "name": "guitarhero-ai-coach--v1",
+  "name": "riffson",
   "private": true,
   "version": "0.1.0",
   "description": "Coach de guitare avec IA : leçons guidées sur des morceaux connus, validation au micro, IA au choix (Gemini, Claude, Mistral, Ollama, Hugging Face).",

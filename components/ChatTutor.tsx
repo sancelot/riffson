@@ -5,25 +5,25 @@ import { aiErrorText, sendMessageToAI } from '../services/ai';
 import ReactMarkdown from 'react-markdown';
 import ChordDiagram from './ChordDiagram';
 import RiffPlayer from './RiffPlayer';
+import { CHAT_STORAGE_KEY, readStorage } from '../utils/storage';
 
 interface ChatTutorProps {
   user: UserProfile;
 }
 
-export const CHAT_STORAGE_KEY ='gibson_chat_history';
 const MAX_STORED_MESSAGES = 50;
 const ERROR_ID_PREFIX = 'err_';
 
 const welcomeMessage = (name: string): ChatMessage => ({
   id: 'welcome',
   role: 'model',
-  text: `Salut ${name} ! Je suis **Gibson**, ton coach interactif. 🎸\n\nJe peux t'expliquer des accords, mais je peux aussi **jouer des mélodies complètes** pour toi.\n\nDemande-moi par exemple : "Joue-moi le riff de Seven Nation Army" ou "Montre-moi un arpège triste".`,
+  text: `Salut ${name} ! Je suis **Riffson**, ton coach interactif. 🎸\n\nJe peux t'expliquer des accords, mais je peux aussi **jouer des mélodies complètes** pour toi.\n\nDemande-moi par exemple : "Joue-moi le riff de Seven Nation Army" ou "Montre-moi un arpège triste".`,
   timestamp: Date.now()
 });
 
 const loadMessages = (name: string): ChatMessage[] => {
   try {
-    const saved = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) || '[]');
+    const saved = JSON.parse(readStorage(CHAT_STORAGE_KEY) || '[]');
     if (Array.isArray(saved) && saved.length > 0) return saved;
   } catch { /* historique corrompu : on repart de zéro */ }
   return [welcomeMessage(name)];
@@ -110,7 +110,7 @@ const ChatTutor: React.FC<ChatTutorProps> = ({ user }) => {
             <Bot size={24} className="text-slate-900" />
         </div>
         <div>
-            <h2 className="font-black text-white text-lg tracking-tight uppercase italic">Coach Gibson</h2>
+            <h2 className="font-black text-white text-lg tracking-tight uppercase italic">Coach Riffson</h2>
             <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest">Prêt à jouer</p>
         </div>
       </div>
@@ -143,7 +143,7 @@ const ChatTutor: React.FC<ChatTutorProps> = ({ user }) => {
             <div className="flex justify-start animate-pulse">
                 <div className="bg-slate-800 p-4 rounded-3xl border border-slate-700 flex items-center gap-3">
                     <Loader2 size={18} className="animate-spin text-amber-500" />
-                    <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Gibson prépare sa démo...</span>
+                    <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Riffson prépare sa démo...</span>
                 </div>
             </div>
         )}
@@ -156,7 +156,7 @@ const ChatTutor: React.FC<ChatTutorProps> = ({ user }) => {
             value={input} 
             onChange={(e) => setInput(e.target.value)} 
             onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
-            placeholder="Demandez un riff à Gibson..." 
+            placeholder="Demandez un riff à Riffson..." 
             className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl px-5 py-4 text-white focus:ring-2 focus:ring-amber-500 outline-none"
           />
           <button onClick={() => handleSend()} className="bg-amber-500 text-slate-900 rounded-2xl p-4 shadow-lg shadow-amber-500/20">

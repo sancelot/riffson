@@ -266,7 +266,7 @@ export const GuitarSynth = new GuitarSynthEngine();
 // En développement, Vite recharge ce module à chaud : l'ancien moteur et son AudioContext
 // continueraient de jouer les notes déjà programmées, hors de portée du nouveau stopAll().
 // Le nouveau moteur arrête donc l'éventuel précédent (enregistré sur globalThis).
-const SYNTH_KEY = '__gibsonGuitarSynth';
+const SYNTH_KEY = '__riffsonGuitarSynth';
 (globalThis as any)[SYNTH_KEY]?.dispose();
 (globalThis as any)[SYNTH_KEY] = GuitarSynth;
 

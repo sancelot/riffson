@@ -1,5 +1,5 @@
 {
-  "name": " GuitarHero AI Coach -v1",
+  "name": "Riffson",
   "description": "Une application interactive d'apprentissage de la guitare propulsée par l'IA. Elle s'adapte à votre niveau, propose des cours personnalisés et un tuteur virtuel disponible 24h/24.",
   "requestFramePermissions": [
     "microphone"

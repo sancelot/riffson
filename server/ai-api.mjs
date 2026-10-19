@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const LEVELS = ['Débutant', 'Intermédiaire', 'Avancé', 'Inconnu'];
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif'];
 
-const COACH_INSTRUCTION = `Tu es "Gibson", un coach guitare expert.
+const COACH_INSTRUCTION = `Tu es "Riffson", un coach guitare expert.
 RÈGLES VISUELLES :
 1. Titres Markdown (##).
 2. Listes à puces.
@@ -219,7 +219,7 @@ const LOOPBACK = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
  */
 const assertLocalSettingsAccess = (req) => {
   if (!LOOPBACK.includes(req.socket?.remoteAddress)) {
-    throw new HttpError(403, "Les réglages de l'IA ne sont modifiables que depuis l'ordinateur qui fait tourner Gibson.");
+    throw new HttpError(403, "Les réglages de l'IA ne sont modifiables que depuis l'ordinateur qui fait tourner Riffson.");
   }
   if (req.method === 'POST' && !String(req.headers['content-type'] || '').includes('application/json')) {
     throw new HttpError(415, 'Requête JSON attendue');
@@ -247,7 +247,7 @@ const settingsRoutes = {
     const started = Date.now();
     const reply = await generate(config, {
       effort: 'low',
-      messages: [{ role: 'user', text: 'Test de connexion : réponds seulement « OK, Gibson est prêt ! »' }]
+      messages: [{ role: 'user', text: 'Test de connexion : réponds seulement « OK, Riffson est prêt ! »' }]
     });
     return { ok: true, reply: reply.trim().slice(0, 200), ms: Date.now() - started, provider: config.provider, model: config.model };
   },

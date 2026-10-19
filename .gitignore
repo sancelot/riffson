@@ -23,5 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# Réglages IA (clés API) enregistrés par l'onglet Réglages
+# Réglages IA (clés API) enregistrés par l'onglet Réglages (et leur ancien nom)
+.riffson-ai.json
 .gibson-ai.json

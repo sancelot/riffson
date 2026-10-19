@@ -1,11 +1,20 @@
-// Réglages du fournisseur d'IA, stockés côté serveur dans .gibson-ai.json (jamais envoyés au navigateur :
+// Réglages du fournisseur d'IA, stockés côté serveur dans .riffson-ai.json (jamais envoyés au navigateur :
 // les clés n'en sortent que masquées). Fichier ignoré par git.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const SETTINGS_FILE = path.join(root, '.gibson-ai.json');
+export const SETTINGS_FILE = path.join(root, '.riffson-ai.json');
+// Nom du fichier avant que le projet ne s'appelle Riffson
+const LEGACY_SETTINGS_FILE = path.join(root, '.gibson-ai.json');
+
+/** Reprend les réglages (et les clés) enregistrés sous l'ancien nom du projet. */
+const migrateLegacySettings = () => {
+  if (!fs.existsSync(SETTINGS_FILE) && fs.existsSync(LEGACY_SETTINGS_FILE)) {
+    fs.renameSync(LEGACY_SETTINGS_FILE, SETTINGS_FILE);
+  }
+};
 
 /** Fournisseurs proposés dans le panneau Réglages. */
 export const PROVIDERS = {
@@ -84,6 +93,7 @@ const defaults = (env) => {
 
 export function loadSettings(env = process.env) {
   const base = defaults(env);
+  migrateLegacySettings();
   try {
     const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
     const providers = { ...base.providers };

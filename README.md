@@ -1,4 +1,4 @@
-# 🎸 Gibson : coach de guitare avec IA
+# 🎸 Riffson : coach de guitare avec IA
 
 Application web pour **apprendre la guitare en partant de zéro**, avec un coach
 d'intelligence artificielle. Chaque leçon vise un morceau que vous connaissez déjà :
@@ -56,8 +56,8 @@ quel serveur compatible OpenAI, ou **Ollama en local, gratuit et sans clé**.
 **Prérequis** : [Node.js](https://nodejs.org/) 20 ou plus récent.
 
 ```bash
-git clone https://github.com/<votre-compte>/gibson.git
-cd gibson
+git clone https://github.com/<votre-compte>/riffson.git
+cd riffson
 npm install
 npm run dev
 ```
@@ -100,7 +100,7 @@ Les clés peuvent aussi être placées dans un fichier `.env.local` (`GEMINI_API
 ### Sécurité des clés
 - Les clés restent **côté serveur** : le navigateur appelle `/api/*`, jamais le fournisseur
   directement, et le serveur ne renvoie jamais une clé (seulement ses 4 derniers caractères).
-- Elles sont enregistrées dans `.gibson-ai.json`, **exclu de git**.
+- Elles sont enregistrées dans `.riffson-ai.json`, **exclu de git**.
 - Les réglages ne sont lisibles et modifiables que depuis l'ordinateur qui fait tourner l'application.
 - Le serveur de développement écoute sur tout le réseau local (`0.0.0.0`) : les appareils
   du réseau peuvent utiliser l'IA, donc votre quota.
@@ -189,14 +189,14 @@ améliorations de la détection au micro…
 2. Vérifiez que `npm run typecheck` et `npm run build` passent.
 3. Ouvrez une pull request en décrivant le changement.
 
-Ne commitez jamais de clé API (`.env.local` et `.gibson-ai.json` sont ignorés par git).
+Ne commitez jamais de clé API (`.env.local` et `.riffson-ai.json` sont ignorés par git).
 
 ---
 
 ## Mentions
 
-- Projet indépendant, **non affilié** à Gibson Brands, Activision (Guitar Hero), Metallica,
-  The White Stripes ni à aucun fournisseur d'IA cité. Les noms de marques et de morceaux
+- Projet indépendant, **non affilié** à Metallica, The White Stripes ni à aucun fournisseur
+  d'IA cité. Les noms de marques et de morceaux
   appartiennent à leurs détenteurs.
 - Les extraits musicaux sont de courts passages utilisés à des fins pédagogiques ;
   « Au clair de la lune » est du domaine public.

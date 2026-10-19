@@ -45,6 +45,6 @@ const serveStatic = (req, res) => {
 const port = Number(process.env.PORT) || 3000;
 http.createServer((req, res) => api(req, res, () => serveStatic(req, res)))
   .listen(port, () => {
-    console.log(`Gibson sur http://localhost:${port}`);
+    console.log(`Riffson sur http://localhost:${port}`);
     console.log("Fournisseur d'IA : à configurer dans l'onglet Réglages de l'application (depuis ce poste).");
   });

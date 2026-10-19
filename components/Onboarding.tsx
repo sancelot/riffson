@@ -22,7 +22,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         <div className="bg-amber-500 p-4 rounded-full mb-6 shadow-lg shadow-amber-500/20">
           <Guitar size={48} className="text-slate-900" />
         </div>
-        <h1 className="text-3xl font-bold mb-2 text-white">Bienvenue sur GuitarHero AI</h1>
+        <h1 className="text-3xl font-bold mb-2 text-white">Bienvenue sur Riffson</h1>
         <p className="text-slate-400 mb-8">Votre coach personnel de guitare, propulsé par l'intelligence artificielle.</p>
         
         <div className="w-full max-w-md">
