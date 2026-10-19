@@ -56,7 +56,7 @@ quel serveur compatible OpenAI, ou **Ollama en local, gratuit et sans clé**.
 **Prérequis** : [Node.js](https://nodejs.org/) 20 ou plus récent.
 
 ```bash
-git clone https://github.com/<votre-compte>/riffson.git
+git clone https://github.com/sancelot/riffson.git
 cd riffson
 npm install
 npm run dev
