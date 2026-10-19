@@ -114,20 +114,51 @@ const lessonSchema = {
   required: ['title', 'description', 'content', 'duration', 'goalTitle', 'recap', 'exercises']
 };
 
+// Tablature lue : une suite d'« événements » (une ou plusieurs notes jouées ensemble, et leur durée)
 const scanSchema = {
-  type: 'array',
-  items: {
-    type: 'object',
-    properties: {
-      prompt: { type: 'string' },
-      targetString: { type: 'number' },
-      targetFret: { type: 'number' },
-      targetNote: { type: 'string' },
-      targetFrequency: { type: 'number' }
-    },
-    required: ['prompt', 'targetString', 'targetFret', 'targetNote', 'targetFrequency']
-  }
+  type: 'object',
+  properties: {
+    isTablature: { type: 'boolean' },
+    title: { type: 'string' },
+    tempo: { type: 'number' },
+    events: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          notes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { string: { type: 'number' }, fret: { type: 'number' } },
+              required: ['string', 'fret']
+            }
+          },
+          duration: { type: 'number' }
+        },
+        required: ['notes', 'duration']
+      }
+    }
+  },
+  required: ['isTablature', 'tempo', 'events']
 };
+
+const SCAN_INSTRUCTION = `Tu lis l'image d'une tablature de guitare et tu la transcris fidèlement.
+D'ABORD : "isTablature" = true seulement si l'image contient vraiment une tablature (6 lignes horizontales avec des numéros
+de cases). Sinon (photo, dessin, texte, partition sans tablature…) : isTablature = false et events = [] ; n'invente rien.
+RÈGLES DE LECTURE :
+- Une portée de tablature a 6 lignes horizontales. La ligne du HAUT est la corde 1 (Mi aigu, la plus fine) ;
+  la 2e ligne est la corde 2 (Si) ; … ; la ligne du BAS est la corde 6 (Mi grave). Ne jamais inverser.
+- Un nombre posé sur une ligne = la case à jouer sur cette corde (0 = corde à vide).
+- Lis de gauche à droite, mesure après mesure, puis la portée suivante, de haut en bas de la page.
+- Des nombres alignés verticalement (les uns au-dessus des autres) se jouent EN MÊME TEMPS :
+  un seul événement contenant plusieurs notes.
+- "duration" = durée de l'événement en temps (noire = 1, croche = 0.5, blanche = 2), d'après les hampes et
+  ligatures sous la portée ; sans indication, répartis la mesure en 4 temps.
+- "tempo" = nombre indiqué (ex. « ♩ = 110 »), sinon 80. "title" = titre du morceau s'il est écrit.
+- Ignore les répétitions (« 6x », barres de reprise) : chaque mesure écrite une seule fois. Au plus 16 mesures.
+- Ne transcris que les nombres réellement présents sur l'image, ne devine rien.
+- Si un numéro rouge (1 à 6) est écrit à gauche d'une ligne, c'est le numéro de la corde : fie-toi à lui.`;
 
 const routes = {
   // Conversation sans état côté serveur : le client renvoie l'historique à chaque message
@@ -199,16 +230,31 @@ Utilise Markdown. Si tu mentionnes un accord, mets-le entre crochets sur une nou
 
   async scan(cfg, body) {
     if (!IMAGE_TYPES.includes(body.mimeType)) throw new HttpError(415, "Format d'image non supporté");
-    const exercises = await generate(cfg, {
+    // Notes déjà lues dans le navigateur (utils/tabImage.ts) : l'IA ne lit que le titre et le tempo
+    if (body.metaOnly) {
+      const meta = await generate(cfg, {
+        schema: { type: 'object', properties: { title: { type: 'string' }, tempo: { type: 'number' } }, required: ['tempo'] },
+        effort: 'low',
+        messages: [{
+          role: 'user',
+          image: { mimeType: body.mimeType, data: text(body.image, 'image', MAX_BODY_BYTES) },
+          text: 'Image de partition ou de tablature. Donne seulement "title" (le titre du morceau s\'il est écrit, sinon chaîne vide) et "tempo" (le nombre indiqué après le symbole de noire, ex. « ♩ = 110 » ; 0 si absent).'
+        }]
+      });
+      return { title: meta?.title || '', tempo: meta?.tempo, events: [] };
+    }
+    const tab = await generate(cfg, {
       schema: scanSchema,
-      effort: 'medium',
+      effort: 'high', // lecture d'image minutieuse : chaque chiffre et chaque ligne compte
       messages: [{
         role: 'user',
         image: { mimeType: body.mimeType, data: text(body.image, 'image', MAX_BODY_BYTES) },
-        text: "Analyse cette tablature de guitare. Identifie les notes successives et retourne un tableau JSON d'exercices. Pour chaque note, précise : prompt (ex: 'Joue la case 2 sur la corde 3'), targetString (1-6), targetFret (0-22), targetNote (ex: 'A'), et targetFrequency (Hz)."
+        text: SCAN_INSTRUCTION
       }]
     });
-    return { exercises };
+    // Image sans tablature : on ne garde rien, même si le modèle a tout de même inventé des notes
+    if (tab?.isTablature === false) return { title: '', tempo: 0, events: [] };
+    return { title: tab?.title || '', tempo: tab?.tempo, events: Array.isArray(tab?.events) ? tab.events : [] };
   }
 };
 

@@ -291,7 +291,7 @@ class GuitarSynthEngine {
         sequence.forEach((note) => {
             noteTimes.push(currentTime);
             // duration est exprimé en ratio de temps (1.0 = une noire)
-            const noteLength = (note.duration || 1.0) * beatDuration;
+            const noteLength = (note.duration ?? 1.0) * beatDuration; // 0 = jouée avec la note suivante
             const freq = getFrequencyFromPosition(note.string, note.fret);
             if (freq > 0) {
                 const previous = ringingByString.get(note.string);

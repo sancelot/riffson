@@ -1,7 +1,8 @@
 // Client des fonctions IA : tous les appels passent par l'API serveur /api/*
 // (server/ai-api.mjs), qui détient les clés et appelle le fournisseur choisi dans Réglages.
 import { CHORD_DEFINITIONS, CHORD_FINGERS, CHORD_NAMES_FR, FINGER_NAMES, INITIAL_LESSONS, STRING_NAMES_FR } from '../constants';
-import { UserLevel, UserProfile, Lesson, InteractiveExercise, ChatMessage } from '../types';
+import { UserLevel, UserProfile, Lesson, InteractiveExercise, ChatMessage, MelodyNote } from '../types';
+import { readTabImage, splitTabStaves } from '../utils/tabImage';
 import { getChordNotesFr, getFrequencyFromPosition, getNoteNameFr } from '../utils/audio';
 
 /** Message d'erreur IA lisible (le serveur renvoie déjà la cause précise : clé refusée, modèle introuvable…). */
@@ -162,11 +163,51 @@ export const generateLessonContent = async (query: string, userLevel: UserLevel)
 };
 
 /** Analyzes a guitar tab image and extracts playable notes into interactive exercises. */
-export const scanGuitarTab = async (base64Image: string, mimeType: string = 'image/png'): Promise<InteractiveExercise[]> => {
-  const { exercises } = await callApi<{ exercises: any[] }>('scan', { image: base64Image, mimeType });
-  return (Array.isArray(exercises) ? exercises : []).map((item, index) => normalizeExercise({
-    ...item,
-    tolerance: 5,
-    duration_sec: 1.5
-  }, `scanned_note_${Date.now()}_${index}`));
+export interface ScannedTab {
+  title: string;
+  tempo: number;
+  sequence: MelodyNote[]; // notes jouées ensemble : durée 0 sauf la dernière de l'événement
+  source: 'direct' | 'ai'; // lue directement dans l'image, ou par l'IA (à vérifier)
+}
+
+interface ScanEvent { notes?: { string?: number, fret?: number }[], duration?: number }
+
+/** Convertit les événements lus par l'IA (notes simultanées + durée) en séquence jouable. */
+const eventsToSequence = (events: ScanEvent[]): MelodyNote[] => events.flatMap(event => {
+  const notes = (event.notes || [])
+    .map(n => ({ string: Number(n.string), fret: Number(n.fret) }))
+    .filter(n => Number.isInteger(n.string) && n.string >= 1 && n.string <= 6 && Number.isInteger(n.fret) && n.fret >= 0 && n.fret <= 24)
+    // une même corde ne peut jouer qu'une note à la fois ; on gratte de la corde grave vers l'aiguë
+    .filter((n, i, all) => all.findIndex(m => m.string === n.string) === i)
+    .sort((a, b) => b.string - a.string);
+  const duration = Number(event.duration) >= 0.125 && Number(event.duration) <= 8 ? Number(event.duration) : 1;
+  return notes.map((n, i) => ({ ...n, duration: i === notes.length - 1 ? duration : 0 }));
+});
+
+/**
+ * Lit une photo de tablature.
+ * 1. Tablature imprimée : lecture directe dans le navigateur (utils/tabImage.ts), exacte et instantanée ;
+ *    l'IA ne lit que le titre et le tempo (et si elle n'est pas disponible, tempo 80 par défaut).
+ * 2. Sinon, chaque portée est découpée, agrandie et numérotée, puis lue par l'IA.
+ */
+export const scanGuitarTab = async (dataUrl: string, mimeType: string = 'image/png'): Promise<ScannedTab> => {
+  const direct = await readTabImage(dataUrl).catch(() => []);
+  if (direct.length > 0) {
+    const meta = await callApi<{ title?: string, tempo?: number }>('scan', { image: dataUrl.split(',')[1], mimeType, metaOnly: true })
+      .catch(() => ({ title: '', tempo: 0 }));
+    const tempo = Number(meta.tempo);
+    return { title: (meta.title || '').trim(), tempo: tempo >= 30 && tempo <= 240 ? tempo : 80, sequence: direct, source: 'direct' };
+  }
+
+  const staves = await splitTabStaves(dataUrl).catch(() => []);
+  const images = staves.length > 0 ? staves : [{ data: dataUrl.split(',')[1], mimeType }];
+  const result: ScannedTab = { title: '', tempo: 0, sequence: [], source: 'ai' };
+  for (const image of images) {
+    const tab = await callApi<{ title?: string, tempo?: number, events?: ScanEvent[] }>('scan', { image: image.data, mimeType: image.mimeType });
+    result.title ||= (tab.title || '').trim();
+    if (!result.tempo && Number(tab.tempo) >= 30 && Number(tab.tempo) <= 240) result.tempo = Number(tab.tempo);
+    result.sequence.push(...eventsToSequence(Array.isArray(tab.events) ? tab.events : []));
+  }
+  result.tempo ||= 80;
+  return result;
 };

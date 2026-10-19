@@ -30,7 +30,7 @@ const RiffPlayer: React.FC<RiffPlayerProps> =({ title, sequence, tempo = 100, de
     const stringNames = ['1 Mi', '2 Si', '3 Sol', '4 Ré', '5 La', '6 Mi'];
     const hasLyrics = sequence.some(n => n.lyric);
     const beatWidth = 80; // Largeur d'un temps (noire)
-    const totalDurationRatio = sequence.reduce((acc, note) => acc + (note.duration || 1.0), 0);
+    const totalDurationRatio = sequence.reduce((acc, note) => acc + (note.duration ?? 1.0), 0);
     const totalWidth = totalDurationRatio * beatWidth;
 
     // Fait défiler la tablature pour garder le curseur dans la zone visible
@@ -112,8 +112,13 @@ const RiffPlayer: React.FC<RiffPlayerProps> =({ title, sequence, tempo = 100, de
                         return sequence.map((note, idx) => {
                             const x = currentX;
                             const y = (note.string - 1) * 24 + 10;
-                            const duration = note.duration || 1.0;
-                            currentX += duration * beatWidth;
+                            const step = note.duration ?? 1.0;
+                            currentX += step * beatWidth;
+                            // Une note de durée 0 sonne avec la suivante (notes empilées) : elle reste
+                            // en surbrillance aussi longtemps que l'ensemble
+                            let j = idx;
+                            while (j < sequence.length - 1 && (sequence[j].duration ?? 1.0) === 0) j++;
+                            const duration = sequence[j].duration ?? 1.0;
                             
                             if (note.fret === -1) return null; // Silence
 

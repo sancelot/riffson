@@ -13,6 +13,7 @@ interface FretboardProps {
     demoPhase?: 'idle' | 'setup' | 'playing';
     maxFret?: number; // case la plus haute à afficher (12 minimum, 22 maximum)
     chord?: string;   // accord tenu par la main gauche, affiché en transparence
+    extraPositions?: { string: number, fret: number }[]; // autres notes jouées en même temps que la cible
 }
 
 // Vue "tablature" : corde 1 (Mi aigu, la plus fine) en haut, corde 6 (Mi grave) en bas
@@ -38,7 +39,8 @@ const Fretboard: React.FC<FretboardProps> = ({
     isSuccess = false,
     demoPhase = 'idle',
     maxFret = 12,
-    chord
+    chord,
+    extraPositions = []
 }) => {
     const neckWidth = 1000;
     const stringSpacing = 30;
@@ -110,6 +112,16 @@ const Fretboard: React.FC<FretboardProps> = ({
         });
     };
 
+    // Notes jouées en même temps que la cible (tablature scannée) : même marqueur, sans numéro de doigt
+    const renderExtraPositions = () => extraPositions
+        .filter(n => n.string >= 1 && n.string <= 6 && isVisible(n.fret))
+        .map((n, i) => (
+            <g key={`extra-${i}`}>
+                <circle cx={fretX(n.fret)} cy={stringY(n.string)} r={n.fret === 0 ? 12 : 18} fill={STRING_CONFIG[n.string - 1].color} stroke="white" strokeWidth={3} />
+                {n.fret === 0 && <text x={fretX(0)} y={stringY(n.string) + 5} textAnchor="middle" fill="white" fontSize="12" fontWeight="900">0</text>}
+            </g>
+        ));
+
     const renderTargetIndicator = () => {
         if (!activeNote.string || !isVisible(activeNote.fret)) return null;
 
@@ -139,6 +151,7 @@ const Fretboard: React.FC<FretboardProps> = ({
                 ))}
                 {renderStrings()}
                 {renderChordShape()}
+                {renderExtraPositions()}
                 {renderTargetIndicator()}
                 {detectedPosition && !isPlaying && isVisible(detectedPosition.fret) && (
                     <circle cx={fretX(detectedPosition.fret)} cy={stringY(detectedPosition.string)} r={12} fill="#ef4444" opacity={0.6} />

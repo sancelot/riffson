@@ -1,12 +1,14 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { aiErrorText, generateLessonContent, scanGuitarTab } from '../services/ai';
-import { UserLevel, InteractiveExercise } from '../types';
+import { aiErrorText, generateLessonContent, scanGuitarTab, ScannedTab } from '../services/ai';
+import { UserLevel, MelodyNote } from '../types';
 import { Search, Loader2, Mic, Play, Square, Music, Activity, Camera, Zap, ArrowUp, ArrowDown, CheckCircle, Info, Power } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import Fretboard from './Fretboard';
 import ChordDiagram from './ChordDiagram';
-import { autoCorrelate, getNoteFromFrequency } from '../utils/audio';
+import { autoCorrelate, getNoteNameFr, GuitarSynth } from '../utils/audio';
+import RiffPlayer from './RiffPlayer';
+import { STRING_NAMES_FR } from '../constants';
 
 interface ToolsProps {
     userLevel: UserLevel;
@@ -49,24 +51,26 @@ const Tools: React.FC<ToolsProps> = ({ userLevel }) => {
 const Scanner = () => {
     const [image, setImage] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
-    const [exercises, setExercises] = useState<InteractiveExercise[]>([]);
+    const [tab, setTab] = useState<ScannedTab | null>(null);
     const [currentStep, setCurrentStep] = useState(0);
     const [scanError, setScanError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const reset = () => { setImage(null); setTab(null); setCurrentStep(0); setScanError(null); };
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onloadend = async () => {
-            const base64 = reader.result as string;
-            setImage(base64);
-            setExercises([]);
+            const dataUrl = reader.result as string;
+            setImage(dataUrl);
+            setTab(null);
             setCurrentStep(0);
             setScanError(null);
             setLoading(true);
             try {
-                setExercises(await scanGuitarTab(base64.split(',')[1], file.type || 'image/png'));
+                setTab(await scanGuitarTab(dataUrl, file.type || 'image/png'));
             } catch (err) {
                 console.error(err);
                 setScanError(`L'analyse a échoué : ${aiErrorText(err)}`);
@@ -78,42 +82,64 @@ const Scanner = () => {
         e.target.value = ''; // permet de re-sélectionner le même fichier
     };
 
-    const currentEx = exercises.length > 0 ? exercises[currentStep] : null;
+    // Pas à pas : un pas par moment joué (les notes jouées ensemble restent groupées)
+    const steps: MelodyNote[][] = [];
+    for (const note of tab?.sequence || []) {
+        const last = steps[steps.length - 1];
+        if (last && last[last.length - 1].duration === 0) last.push(note);
+        else steps.push([note]);
+    }
+    const step = steps[currentStep];
+    const describe = (n: MelodyNote) => `corde ${n.string} (${STRING_NAMES_FR[n.string]}) ${n.fret === 0 ? 'à vide' : `case ${n.fret}`}`;
 
     return (
         <div className="flex flex-col h-full p-6 animate-fadeIn overflow-y-auto">
              <h2 className="text-2xl font-bold text-white mb-2">Scanner de Tablature</h2>
-             <p className="text-slate-400 text-sm mb-6">Prenez une photo d'une partition, l'IA va vous montrer comment la jouer.</p>
+             <p className="text-slate-400 text-sm mb-6">Photographiez ou importez une tablature : l'IA la lit, puis vous l'écoutez et la travaillez note par note.</p>
              {!image ? (
                  <button onClick={() => fileInputRef.current?.click()} className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-700 rounded-2xl bg-slate-800/50 hover:bg-slate-800 transition-colors group">
                      <div className="bg-slate-700 p-6 rounded-full mb-4 group-hover:scale-110 transition-transform"><Camera size={40} className="text-amber-500" /></div>
-                     <span className="font-bold text-slate-300">Prendre une photo</span>
+                     <span className="font-bold text-slate-300">Prendre une photo ou choisir une image</span>
                  </button>
              ) : (
-                 <div className="flex flex-col h-full">
-                     <div className="relative h-40 rounded-xl overflow-hidden mb-6 border border-slate-700">
-                         <img src={image} alt="Tab" className="w-full h-full object-cover opacity-50" />
-                         <button onClick={() => { setImage(null); setExercises([]); setCurrentStep(0); setScanError(null); }} className="absolute top-2 right-2 bg-black/50 p-2 rounded-full text-white">×</button>
+                 <div className="flex flex-col">
+                     <div className="relative rounded-xl overflow-hidden mb-4 border border-slate-700 bg-white">
+                         <img src={image} alt="Tablature importée" className="w-full max-h-64 object-contain" />
+                         <button onClick={reset} aria-label="Changer d'image" className="absolute top-2 right-2 bg-black/60 p-2 rounded-full text-white">×</button>
                      </div>
                      {loading ? (
-                         <div className="flex flex-col items-center justify-center py-12"><Loader2 size={40} className="animate-spin text-amber-500 mb-4" /><p className="text-slate-400">Analyse...</p></div>
-                     ) : exercises.length > 0 && currentEx ? (
-                         <div className="flex-1 flex flex-col">
-                             <div className="flex justify-between items-center mb-4">
-                                 <h3 className="text-xl font-bold text-white">Note {currentStep + 1}</h3>
+                         <div className="flex flex-col items-center justify-center py-12">
+                             <Loader2 size={40} className="animate-spin text-amber-500 mb-4" />
+                             <p className="text-slate-400">Lecture de la tablature, portée par portée…</p>
+                         </div>
+                     ) : tab && steps.length > 0 && step ? (
+                         <>
+                             <RiffPlayer title={tab.title || 'Tablature scannée'} sequence={tab.sequence} tempo={tab.tempo} description={tab.source === 'direct'
+                                 ? "Lue directement dans l'image (rythme déduit de l'espacement, en 4/4)."
+                                 : "Lue par l'IA : vérifiez-la sur l'image avant de l'apprendre."} />
+
+                             <div className="flex justify-between items-center mb-3">
+                                 <h3 className="text-lg font-bold text-white">Pas à pas : {currentStep + 1} / {steps.length}</h3>
                                  <div className="flex gap-2">
-                                     <button onClick={() => setCurrentStep(Math.max(0, currentStep - 1))} className="p-2 bg-slate-700 rounded-lg">Prev</button>
-                                     <button onClick={() => setCurrentStep(Math.min(exercises.length - 1, currentStep + 1))} className="p-2 bg-amber-500 text-slate-900 rounded-lg">Next</button>
+                                     <button onClick={() => setCurrentStep(Math.max(0, currentStep - 1))} disabled={currentStep === 0} className="px-3 py-2 bg-slate-700 rounded-lg text-white disabled:opacity-40">Précédent</button>
+                                     <button onClick={() => GuitarSynth.playMelody(step.map(n => ({ ...n, duration: 0 })), tab.tempo)} className="px-3 py-2 bg-slate-700 rounded-lg text-amber-400" aria-label="Écouter ce pas"><Play size={16} fill="currentColor" /></button>
+                                     <button onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))} disabled={currentStep === steps.length - 1} className="px-3 py-2 bg-amber-500 text-slate-900 font-bold rounded-lg disabled:opacity-40">Suivant</button>
                                  </div>
                              </div>
                              <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 mb-4 text-center">
-                                 <div className="text-2xl font-black text-amber-500 mb-2">{currentEx.prompt}</div>
+                                 <div className="text-xl font-black text-amber-500">
+                                     {step.length > 1 ? 'Ensemble : ' : 'Jouez '}{step.map(n => `${getNoteNameFr(n.string, n.fret)} (${describe(n)})`).join(' + ')}
+                                 </div>
                              </div>
-                             <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-                                 <Fretboard targetString={currentEx.targetString} targetFret={currentEx.targetFret} finger={currentEx.finger} isPlaying={true} maxFret={Math.max(...exercises.map(ex => ex.targetFret ?? 0))} />
-                             </div>
-                         </div>
-                     ) : <p className="text-center text-red-400">{scanError || 'Aucune note détectée.'}</p>}
+                             <Fretboard
+                                 targetString={step[0].string}
+                                 targetFret={step[0].fret}
+                                 extraPositions={step.slice(1)}
+                                 isPlaying={true}
+                                 maxFret={Math.max(...tab.sequence.map(n => n.fret))}
+                             />
+                         </>
+                     ) : <p className="text-center text-red-400">{scanError || "Aucune note lue sur cette image. Essayez une photo plus nette et bien droite, cadrée sur la tablature."}</p>}
                  </div>
              )}
              <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" className="hidden" />
