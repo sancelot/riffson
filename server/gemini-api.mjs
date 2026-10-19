@@ -17,6 +17,9 @@ RÈGLES VISUELLES :
 2. Listes à puces.
 3. Tags d'accords sur LIGNE SÉPARÉE (ex: \n\n[Em]\n\n).
 4. Ton : Rock & Roll, concis.
+5. Pédagogie : nomme les accords en entier la première fois (« Mi mineur (Em) ») avec leurs notes,
+   et dis toujours ce que fait la main gauche (quel doigt, quelle case, quelle corde) et la main droite (quel doigt ou médiator, quel sens).
+   Désigne les cordes par numéro et nom : corde 1 = Mi aigu (la plus fine) ... corde 6 = Mi grave (la plus épaisse).
 NOUVELLE CAPACITÉ PRO : Tu peux générer des riffs avec RYTHME.
 Utilise ce format STRICT pour les riffs :
 [RIFF:Nom|Tempo|corde,case,durée;corde,case,durée;...]
@@ -80,9 +83,13 @@ const lessonSchema = {
           duration_sec: { type: Type.NUMBER },
           targetString: { type: Type.NUMBER },
           targetFret: { type: Type.NUMBER },
+          finger: { type: Type.NUMBER },
+          leftHand: { type: Type.STRING },
+          rightHand: { type: Type.STRING },
+          chord: { type: Type.STRING },
           songTitle: { type: Type.STRING }
         },
-        required: ['prompt', 'targetNote', 'targetFrequency', 'targetString', 'targetFret']
+        required: ['prompt', 'targetNote', 'targetFrequency', 'targetString', 'targetFret', 'leftHand', 'rightHand']
       }
     }
   },
@@ -141,7 +148,15 @@ Inclus des exercices techniques, un concept de théorie et un riff à pratiquer.
 Les leçons déjà apprises sont : ${titles.join(', ') || 'aucune'}.
 La leçon doit être inédite. Inclus un titre, une description, un contenu pédagogique en markdown,
 et des exercices interactifs (une note par exercice, avec corde 1-6 et case 0-12).
-Pour les accords, utilise le format [NOM_ACCORD] sur une ligne seule.`,
+Pour les accords, utilise le format [NOM_ACCORD] sur une ligne seule, entouré de lignes vides.
+
+RÈGLES PÉDAGOGIQUES (l'élève peut être totalement novice) :
+- Nomme toujours un accord en entier la première fois (ex : « Mi mineur (Em) ») et cite ses notes.
+- Explique le lien entre la théorie et ce que l'élève joue (ex : un arpège = les notes de l'accord une par une).
+- Pour chaque exercice, décris séparément la main gauche (doigt 1 index ... 4 auriculaire, case, corde, ou « rien à presser » pour une corde à vide)
+  dans "leftHand" et la main droite (pouce, index, majeur, annulaire ou médiator, sens d'attaque) dans "rightHand".
+- Désigne les cordes par leur numéro ET leur nom : corde 1 = Mi aigu (la plus fine) ... corde 6 = Mi grave (la plus épaisse).
+- "finger" = doigt de la main gauche (absent pour une corde à vide). "chord" = accord tenu pendant l'exercice, seulement si la main gauche le tient vraiment.`,
       config: { responseMimeType: 'application/json', responseSchema: lessonSchema }
     });
     return { lesson: JSON.parse(response.text || 'null') };

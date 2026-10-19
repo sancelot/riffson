@@ -13,8 +13,12 @@ export interface FretboardPosition {
     fret: number;
 }
 
+export type PluckFinger = 'p' | 'i' | 'm' | 'a' | 'pick';
+
 export interface MelodyNote extends FretboardPosition {
     duration?: number; // en temps (1.0 = noire, 0.5 = croche)
+    finger?: number;   // doigt main gauche (1 index ... 4 auriculaire), absent pour une corde à vide
+    pluck?: PluckFinger; // doigt main droite : pouce, index, majeur, annulaire ou médiator
 }
 
 /**
@@ -51,6 +55,9 @@ export interface InteractiveExercise {
   ghostNotes?: FretboardPosition[]; 
   sequence?: MelodyNote[]; // Nouvelle propriété pour les riffs complets
   tempo?: number; // BPM de la séquence
+  leftHand?: string;  // consigne main gauche (ce que presse la main sur le manche)
+  rightHand?: string; // consigne main droite (comment pincer ou gratter)
+  chord?: string;     // accord tenu par la main gauche pendant l'exercice (ex: "Em"), affiché sur le manche
   songTitle?: string;
   artist?: string;
 }

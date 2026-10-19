@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Lesson, InteractiveExercise, MIMMode, FretboardPosition } from '../types';
-import { ArrowLeft, Mic, Eye, CheckCircle } from 'lucide-react';
+import { Lesson, InteractiveExercise, MIMMode, FretboardPosition, PluckFinger } from '../types';
+import { ArrowLeft, Mic, Eye, CheckCircle, Hand } from 'lucide-react';
+import { CHORD_NAMES_FR, FINGER_NAMES, PLUCK_FINGERS, STRING_NAMES_FR } from '../constants';
 import ReactMarkdown from 'react-markdown';
-import { autoCorrelate, getFrequencyFromPosition, getPositionFromFrequency, GuitarSynth } from '../utils/audio';
+import { autoCorrelate, getFrequencyFromPosition, getNoteNameFr, getPositionFromFrequency, GuitarSynth } from '../utils/audio';
 import Fretboard from './Fretboard';
 import ChordDiagram from './ChordDiagram';
 
@@ -15,7 +16,19 @@ interface LessonViewProps {
 interface TargetNote extends FretboardPosition {
     freq: number;
     duration: number; // en temps
+    finger?: number;
+    pluck?: PluckFinger;
 }
+
+/** Consigne complète d'une note : quelle corde, quelle case, avec quels doigts. */
+const describeNote = (n: TargetNote): string => {
+    const where = `corde ${n.string} (${STRING_NAMES_FR[n.string]})`;
+    const left = n.fret === 0
+        ? 'à vide, la main gauche ne presse rien'
+        : `case ${n.fret}${n.finger ? `, ${FINGER_NAMES[n.finger]} gauche` : ''}`;
+    const right = n.pluck ? ` · main droite : ${PLUCK_FINGERS[n.pluck]}` : '';
+    return `${where}, ${left}${right}`;
+};
 
 const MATCH_CENTS = 50;
 const SEQUENCE_HOLD_SEC = 0.12; // durée minimale de détection d'une note de séquence
@@ -38,7 +51,7 @@ const isSamePitch =(a: number, b: number) => Math.abs(1200 * Math.log2(a / b)) <
 const buildTargets = (exercise: InteractiveExercise): TargetNote[] => {
     const sequence = (exercise.sequence || [])
         .filter(n => n.fret >= 0)
-        .map(n => ({ string: n.string, fret: n.fret, duration: n.duration || 1.0, freq: getFrequencyFromPosition(n.string, n.fret) }))
+        .map(n => ({ string: n.string, fret: n.fret, duration: n.duration || 1.0, finger: n.finger, pluck: n.pluck, freq: getFrequencyFromPosition(n.string, n.fret) }))
         .filter(n => n.freq > 0);
     if (sequence.length > 0) return sequence;
     const posFreq = exercise.targetString ? getFrequencyFromPosition(exercise.targetString, exercise.targetFret ?? 0) : -1;
@@ -46,6 +59,7 @@ const buildTargets = (exercise: InteractiveExercise): TargetNote[] => {
         string: exercise.targetString || 0,
         fret: exercise.targetFret ?? 0,
         duration: 1.0,
+        finger: exercise.finger,
         // La position (corde/case) fait foi : la fréquence fournie par l'IA peut être incohérente
         freq: posFreq > 0 ? posFreq : exercise.targetFrequency,
     }];
@@ -240,6 +254,11 @@ const InteractivePractice: React.FC<{ exercise: InteractiveExercise, onSuccess: 
     };
 
     const currentTarget = targets[noteIndex] || targets[targets.length - 1];
+    // Note mise en avant : celle jouée par la démo, ou celle attendue en pratique
+    const demoIndex = activeSequenceNote ? targets.indexOf(activeSequenceNote as TargetNote) : -1;
+    const shownIndex = mimMode === 'demo' ? demoIndex : noteIndex;
+    const shownNote = mimMode === 'demo' ? (demoIndex >= 0 ? targets[demoIndex] : targets[0]) : currentTarget;
+    const hasHandGuide = exercise.leftHand || exercise.rightHand || exercise.chord;
 
     return (
         <div className="flex flex-col h-full bg-slate-950">
@@ -247,11 +266,26 @@ const InteractivePractice: React.FC<{ exercise: InteractiveExercise, onSuccess: 
                 <h2 className="text-white font-bold">{exercise.songTitle ? `${exercise.songTitle} - ` : ''}{exercise.prompt}</h2>
                 {exercise.contextExplanation && <p className="text-slate-400 text-sm mt-1">{exercise.contextExplanation}</p>}
             </div>
-            <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-y-auto">
+            {/* Le contenu défile s'il dépasse, au lieu d'être écrasé (centré seulement s'il tient) */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="min-h-full flex flex-col items-center justify-center">
+                {hasHandGuide && (
+                    <div className="w-full grid sm:grid-cols-2 gap-3 mb-4">
+                        <div className="bg-slate-900 border border-slate-700 rounded-xl p-3">
+                            <p className="text-xs font-bold uppercase tracking-widest text-amber-400 flex items-center gap-1 mb-1"><Hand size={14} className="-scale-x-100" /> Main gauche (sur le manche)</p>
+                            <p className="text-sm text-slate-300">{exercise.leftHand || (exercise.chord ? `Gardez la forme de l'accord ${exercise.chord}${CHORD_NAMES_FR[exercise.chord] ? ` (${CHORD_NAMES_FR[exercise.chord]})` : ''}, en pointillés sur le manche.` : '')}</p>
+                        </div>
+                        <div className="bg-slate-900 border border-slate-700 rounded-xl p-3">
+                            <p className="text-xs font-bold uppercase tracking-widest text-amber-400 flex items-center gap-1 mb-1"><Hand size={14} /> Main droite (au-dessus de la rosace)</p>
+                            <p className="text-sm text-slate-300">{exercise.rightHand || 'Pincez la corde indiquée.'}</p>
+                        </div>
+                    </div>
+                )}
                 <Fretboard
-                    targetString={mimMode === 'practice' ? currentTarget.string : exercise.targetString}
-                    targetFret={mimMode === 'practice' ? currentTarget.fret : exercise.targetFret}
-                    finger={exercise.finger}
+                    targetString={shownNote.string}
+                    targetFret={shownNote.fret}
+                    finger={shownNote.finger}
+                    chord={exercise.chord}
                     demoPhase={demoPhase}
                     maxFret={Math.max(...targets.map(t => t.fret))}
                     activeSequenceNote={mimMode === 'demo' ? activeSequenceNote : null}
@@ -264,10 +298,12 @@ const InteractivePractice: React.FC<{ exercise: InteractiveExercise, onSuccess: 
                     <div className="mt-6 flex flex-wrap gap-2 justify-center">
                         {targets.map((n, i) => {
                             const done = status === 'success' || (mimMode === 'practice' && i < noteIndex);
-                            const current = mimMode === 'practice' && status !== 'success' && i === noteIndex;
+                            const current = status !== 'success' && i === shownIndex;
                             return (
-                                <div key={i} className={`px-2 py-1 rounded-md font-mono text-xs border ${done ? 'bg-green-500/20 border-green-500 text-green-300' : current ? 'bg-amber-500 border-white text-slate-900 font-black' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>
-                                    C{n.string}·{n.fret}
+                                <div key={i} title={describeNote(n)} className={`px-2 py-1 rounded-md text-xs border text-center ${done ? 'bg-green-500/20 border-green-500 text-green-300' : current ? 'bg-amber-500 border-white text-slate-900 font-black' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>
+                                    <div className="font-bold">{getNoteNameFr(n.string, n.fret)}</div>
+                                    <div className="font-mono text-[10px]">corde {n.string} · {n.fret === 0 ? 'à vide' : `case ${n.fret}`}</div>
+                                    {n.pluck && <div className="text-[10px]">{PLUCK_FINGERS[n.pluck]}</div>}
                                 </div>
                             );
                         })}
@@ -278,12 +314,20 @@ const InteractivePractice: React.FC<{ exercise: InteractiveExercise, onSuccess: 
                     {status === 'success' ? (
                         <div className="text-green-400 font-black uppercase tracking-widest flex items-center gap-2"><CheckCircle /> Bravo ! Score {scoreFromMistakes(mistakes)}%</div>
                     ) : mimMode === 'demo' ? (
-                        <div className="animate-pulse text-amber-500 font-bold uppercase tracking-widest">
-                            {demoPhase === 'playing' ? 'Écoutez la mélodie...' : 'Regardez le manche...'}
+                        <div>
+                            <div className="animate-pulse text-amber-500 font-bold uppercase tracking-widest">
+                                {demoPhase === 'playing' ? 'Écoutez et regardez...' : 'Regardez le manche...'}
+                            </div>
+                            {demoPhase === 'playing' && demoIndex >= 0 && (
+                                <p className="text-slate-300 text-sm mt-2">{getNoteNameFr(shownNote.string, shownNote.fret)} : {describeNote(shownNote)}</p>
+                            )}
                         </div>
                     ) : (
-                        <div className="text-white font-bold">
-                            {isSequence ? `Note ${noteIndex + 1} / ${targets.length} : corde ${currentTarget.string}, case ${currentTarget.fret}` : 'À vous de jouer !'}
+                        <div>
+                            <div className="text-white font-bold">
+                                {isSequence ? `Note ${noteIndex + 1} / ${targets.length} : ${getNoteNameFr(currentTarget.string, currentTarget.fret)}` : 'À vous de jouer !'}
+                            </div>
+                            <p className="text-slate-300 text-sm mt-1">{describeNote(currentTarget)}</p>
                         </div>
                     )}
                     {mimMode === 'practice' && status !== 'success' && mistakes > 0 && (
@@ -291,6 +335,7 @@ const InteractivePractice: React.FC<{ exercise: InteractiveExercise, onSuccess: 
                     )}
                     {micError && <p className="text-red-400 text-sm mt-3">{micError}</p>}
                 </div>
+              </div>
             </div>
             <div className="h-4 bg-slate-800 w-full shrink-0">
                 <div className="h-full bg-green-500 transition-all duration-100" style={{ width: `${progress}%` }} />
