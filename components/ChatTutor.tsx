@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Send, Bot, Loader2 } from 'lucide-react';
 import { ChatMessage, UserProfile, MelodyNote } from '../types';
-import { sendMessageToAI } from '../services/gemini';
+import { aiErrorText, sendMessageToAI } from '../services/ai';
 import ReactMarkdown from 'react-markdown';
 import ChordDiagram from './ChordDiagram';
 import RiffPlayer from './RiffPlayer';
@@ -91,7 +91,12 @@ const ChatTutor: React.FC<ChatTutorProps> = ({ user }) => {
       setMessages(prev => [...prev, aiMsg]);
     } catch (error) { 
       console.error(error); 
-      const errorMsg: ChatMessage = { id: `${ERROR_ID_PREFIX}${Date.now()}`, role: 'model', text: "Oups, je n'arrive pas à joindre l'IA (connexion ou clé API Gemini). Réessaie dans un instant.", timestamp: Date.now() };
+      const errorMsg: ChatMessage = {
+        id: `${ERROR_ID_PREFIX}${Date.now()}`,
+        role: 'model',
+        text: `Oups, je n'arrive pas à répondre.\n\n**Cause :** ${aiErrorText(error)}\n\nLe fournisseur d'IA se configure dans l'onglet **Réglages**.`,
+        timestamp: Date.now()
+      };
       setMessages(prev => [...prev, errorMsg]);
     } finally { 
       setIsLoading(false); 

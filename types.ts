@@ -99,7 +99,8 @@ export enum AppView {
   DASHBOARD = 'DASHBOARD',
   LESSON = 'LESSON',
   CHAT = 'CHAT',
-  TOOLS = 'TOOLS'
+  TOOLS = 'TOOLS',
+  SETTINGS = 'SETTINGS'
 }
 
 export interface LessonReview {

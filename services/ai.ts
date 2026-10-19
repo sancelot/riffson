@@ -1,8 +1,12 @@
-// Client des fonctions IA : tous les appels passent par le proxy serveur /api/*
-// (server/gemini-api.mjs), qui détient la clé Gemini.
+// Client des fonctions IA : tous les appels passent par l'API serveur /api/*
+// (server/ai-api.mjs), qui détient les clés et appelle le fournisseur choisi dans Réglages.
 import { CHORD_DEFINITIONS, INITIAL_LESSONS } from '../constants';
 import { UserLevel, UserProfile, Lesson, InteractiveExercise, ChatMessage } from '../types';
 import { getFrequencyFromPosition, getNoteNameFr } from '../utils/audio';
+
+/** Message d'erreur IA lisible (le serveur renvoie déjà la cause précise : clé refusée, modèle introuvable…). */
+export const aiErrorText = (error: unknown): string =>
+  error instanceof Error && error.message ? error.message : 'erreur inconnue';
 
 const callApi = async <T>(route: string, body: unknown): Promise<T> => {
   const response = await fetch(`/api/${route}`, {

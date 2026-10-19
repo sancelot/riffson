@@ -7,7 +7,8 @@ import Dashboard from './components/Dashboard';
 import LessonView from './components/LessonView';
 import ChatTutor from './components/ChatTutor';
 import Tools from './components/Tools';
-import { Home, MessageSquare, BookOpen } from 'lucide-react';
+import Settings from './components/Settings';
+import { Home, MessageSquare, BookOpen, Settings as SettingsIcon } from 'lucide-react';
 import { scheduleReview, streakAfterPractice } from './utils/progress';
 import { GuitarSynth } from './utils/audio';
 import { CHAT_STORAGE_KEY } from './components/ChatTutor';
@@ -172,6 +173,14 @@ const App = () => {
             </div>
             <span className="text-[10px] mt-1 font-medium">Coach</span>
         </button>
+
+        <button
+            onClick={() => setView(AppView.SETTINGS)}
+            className={`flex flex-col items-center p-2 rounded-xl transition-all ${view === AppView.SETTINGS ? 'text-amber-500 scale-110' : 'text-slate-500 hover:text-slate-300'}`}
+        >
+            <SettingsIcon size={24} strokeWidth={view === AppView.SETTINGS ? 2.5 : 2} />
+            <span className="text-[10px] mt-1 font-medium">Réglages</span>
+        </button>
     </div>
   );
 
@@ -227,6 +236,12 @@ const App = () => {
         {view === AppView.TOOLS && (
              <div className="h-full pb-20">
                 <Tools userLevel={user.level} />
+            </div>
+        )}
+
+        {view === AppView.SETTINGS && (
+            <div className="h-full pb-20">
+                <Settings />
             </div>
         )}
       </div>

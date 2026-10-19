@@ -1,10 +1,10 @@
-// Serveur de production : sert le build (dist/) et le proxy Gemini (/api/*).
-// Usage : npm run build && npm start   (variables : GEMINI_API_KEY, PORT)
+// Serveur de production : sert le build (dist/) et l'API IA (/api/*).
+// Usage : npm run build && npm start   (variable : PORT ; fournisseur et clés IA dans l'onglet Réglages)
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createGeminiMiddleware } from './gemini-api.mjs';
+import { createAiMiddleware } from './ai-api.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = path.join(root, 'dist');
@@ -29,7 +29,7 @@ const MIME = {
   '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2'
 };
 
-const api = createGeminiMiddleware(process.env.GEMINI_API_KEY);
+const api = createAiMiddleware(process.env);
 
 const serveStatic = (req, res) => {
   const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
@@ -46,5 +46,5 @@ const port = Number(process.env.PORT) || 3000;
 http.createServer((req, res) => api(req, res, () => serveStatic(req, res)))
   .listen(port, () => {
     console.log(`Gibson sur http://localhost:${port}`);
-    if (!process.env.GEMINI_API_KEY) console.warn('Attention : GEMINI_API_KEY non définie, les fonctions IA renverront une erreur.');
+    console.log("Fournisseur d'IA : à configurer dans l'onglet Réglages de l'application (depuis ce poste).");
   });

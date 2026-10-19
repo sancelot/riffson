@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserLevel, UserProfile, Lesson } from '../types';
 import { INITIAL_LESSONS } from '../constants';
-import { generatePracticeRoutine, generateNextLesson } from '../services/gemini';
+import { aiErrorText, generatePracticeRoutine, generateNextLesson } from '../services/ai';
 import { PlayCircle, CheckCircle, Clock, Trophy, Sparkles, Loader2, Lock, Flame, Brain, Star, Plus, Zap } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { currentStreak, dueReviews } from '../utils/progress';
@@ -44,7 +44,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
           setDailyRoutine(await generatePracticeRoutine(user.level));
       } catch (e) {
           console.error(e);
-          setAiError("Impossible de générer la routine (connexion ou clé API Gemini). Réessayez.");
+          setAiError(`Impossible de générer la routine : ${aiErrorText(e)}`);
       } finally {
           setLoadingRoutine(false);
       }
@@ -60,7 +60,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
         else setAiError("La leçon générée était invalide. Réessayez.");
     } catch (e) {
         console.error(e);
-        setAiError("Impossible de générer la leçon (connexion ou clé API Gemini). Réessayez.");
+        setAiError(`Impossible de générer la leçon : ${aiErrorText(e)}`);
     } finally {
         setIsGeneratingLesson(false);
     }

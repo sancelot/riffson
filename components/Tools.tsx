@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { generateLessonContent, scanGuitarTab } from '../services/gemini';
+import { aiErrorText, generateLessonContent, scanGuitarTab } from '../services/ai';
 import { UserLevel, InteractiveExercise } from '../types';
 import { Search, Loader2, Mic, Play, Square, Music, Activity, Camera, Zap, ArrowUp, ArrowDown, CheckCircle, Info, Power } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -69,7 +69,7 @@ const Scanner = () => {
                 setExercises(await scanGuitarTab(base64.split(',')[1], file.type || 'image/png'));
             } catch (err) {
                 console.error(err);
-                setScanError("L'analyse a échoué (connexion ou clé API Gemini). Réessayez.");
+                setScanError(`L'analyse a échoué : ${aiErrorText(err)}`);
             } finally {
                 setLoading(false);
             }
@@ -431,7 +431,7 @@ const Library: React.FC<{userLevel: UserLevel}> = ({ userLevel }) => {
         try {
             const content = await generateLessonContent(`Explique : ${query}. Donne un diagramme si pertinent.`, userLevel);
             setResult(content);
-        } catch (e) { setResult("Erreur."); } finally { setLoading(false); }
+        } catch (e) { setResult(`**Impossible de générer la fiche :** ${aiErrorText(e)}`); } finally { setLoading(false); }
     };
 
     return (
