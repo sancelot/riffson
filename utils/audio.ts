@@ -114,6 +114,14 @@ const renderPluckedString = (ctx: BaseAudioContext, freq: number): AudioBuffer =
 };
 
 const MELODY_LEAD_SECONDS = 0.1; // marge entre la programmation et la première note
+const STRUM_SPACING_SECONDS = 0.025; // décalage entre deux cordes lors d'un coup de grattage
+
+/** Calendrier d'une suite d'accords, en secondes sur l'horloge audio. */
+export interface ProgressionTiming {
+    startTime: number;
+    duration: number;
+    chordTimes: number[];
+}
 
 /** Calendrier d'une mélodie, en secondes sur l'horloge audio (GuitarSynth.currentTime). */
 export interface MelodyTiming {
@@ -214,6 +222,44 @@ class GuitarSynthEngine {
             this.playNote(tuning[i] * Math.pow(2, fret / 12), RING_SECONDS, volume, t);
             t += 0.03;
         });
+    }
+
+    /**
+     * Gratte une suite d'accords : un coup vers le bas (corde grave -> aiguë) à chaque temps.
+     * `frets` va de la corde grave à l'aiguë (-1 = corde non jouée), `beats` = durée de l'accord en temps.
+     * Renvoie l'instant de départ de chaque accord sur l'horloge audio, pour caler l'affichage.
+     */
+    playProgression(chords: { frets: number[], beats: number }[], tempo: number = 80): ProgressionTiming {
+        const ctx = this.init();
+        if (!Number.isFinite(tempo) || tempo <= 0) tempo = 80;
+        const beatDuration = 60 / tempo;
+        const tuning = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
+        chords.forEach(c => c.frets.forEach((fret, i) => { if (fret >= 0) this.bufferFor(ctx, tuning[i] * Math.pow(2, fret / 12)); }));
+
+        const startTime = ctx.currentTime + MELODY_LEAD_SECONDS;
+        const chordTimes: number[] = [];
+        // Comme sur une vraie guitare, un nouveau coup étouffe la note qui sonnait sur la même corde
+        const ringing = new Map<number, PlayingNote>();
+        let t = startTime;
+        chords.forEach(({ frets, beats }) => {
+            chordTimes.push(t);
+            for (let beat = 0; beat < beats; beat++) {
+                const strumAt = t + beat * beatDuration;
+                frets.forEach((fret, i) => {
+                    if (fret < 0) return;
+                    const noteTime = strumAt + i * STRUM_SPACING_SECONDS;
+                    const previous = ringing.get(i);
+                    if (previous) {
+                        previous.gain.gain.cancelScheduledValues(noteTime);
+                        previous.gain.gain.setTargetAtTime(0, noteTime, 0.015);
+                    }
+                    // Premier temps de l'accord un peu plus appuyé : on entend où il commence
+                    ringing.set(i, this.playNote(tuning[i] * Math.pow(2, fret / 12), RING_SECONDS, beat === 0 ? 0.32 : 0.24, noteTime));
+                });
+            }
+            t += beats * beatDuration;
+        });
+        return { startTime, duration: t - startTime, chordTimes };
     }
 
     /** Horloge audio (secondes) : la référence pour synchroniser une animation avec le son. */

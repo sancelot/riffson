@@ -13,6 +13,10 @@ const LOCAL_TIMEOUT_MS = 15 * 60_000;   // serveurs compatibles OpenAI locaux (L
 const OLLAMA_FIRST_CHUNK_TIMEOUT_MS = 5 * 60_000; // chargement du modèle en mémoire + lecture de la consigne
 const OLLAMA_IDLE_TIMEOUT_MS = 2 * 60_000;        // silence maximal entre deux morceaux de réponse
 const OLLAMA_TOTAL_TIMEOUT_MS = 30 * 60_000;      // garde-fou contre une génération qui ne s'arrête jamais
+// Mémoire de travail du modèle (consignes + historique + réponse). Le défaut d'Ollama (4096 jetons) ne suffit
+// pas : consignes du coach et table de référence en prennent déjà ~2000, et la réponse était coupée.
+// Ollama la réduit de lui-même si le modèle en supporte moins.
+const OLLAMA_CONTEXT_TOKENS = 16_384;
 const MAX_OUTPUT_TOKENS = 16_000;
 
 /** Erreur destinée à l'utilisateur : le message s'affiche tel quel dans l'app. */
@@ -258,7 +262,8 @@ const openAiStyle = {
 // ---------------------------------------------------------------------------
 
 /**
- * Lit la réponse d'Ollama en flux (une ligne JSON par morceau). On n'abandonne que si le modèle
+ * Lit la réponse d'Ollama en flux (une ligne JSON par morceau). Renvoie le texte et `truncated`
+ * (vrai si le modèle s'est arrêté faute de place dans son contexte, au lieu d'avoir fini). On n'abandonne que si le modèle
  * reste silencieux trop longtemps : une leçon peut prendre plusieurs minutes sur un modèle local,
  * tant qu'il produit du texte on l'attend.
  */
@@ -296,10 +301,10 @@ const readOllamaStream = async (config, url, body) => {
         const part = JSON.parse(line);
         if (part.error) throw new ProviderError(`Ollama : ${part.error}`);
         content += part.message?.content || ''; // la réflexion (message.thinking) n'est pas renvoyée à l'élève
-        if (part.done) return content;
+        if (part.done) return { content, truncated: part.done_reason === 'length' };
       }
     }
-    return content;
+    return { content, truncated: false };
   } catch (e) {
     if (e instanceof ProviderError) throw e;
     if (controller.signal.aborted) {
@@ -320,6 +325,7 @@ const ollama = {
     const request = (think) => readOllamaStream(config, `${baseUrl(config)}/api/chat`, {
       model: config.model,
       stream: true,
+      options: { num_ctx: OLLAMA_CONTEXT_TOKENS },
       // Ollama contraint la sortie sur un JSON Schema passé dans `format`
       ...(schema ? { format: schema } : {}),
       ...(think === false ? { think: false } : {}),
@@ -331,11 +337,23 @@ const ollama = {
     // Sorties structurées (leçons, scanner) : la « réflexion » des modèles qui en ont une (qwen3…)
     // allonge la génération d'environ 25 % sans meilleur résultat, on la coupe.
     // Les modèles sans réflexion ignorent l'option.
-    if (schema) return request(false);
+    if (schema) {
+      const result = await request(false);
+      if (result.truncated) {
+        throw new ProviderError(`Le modèle « ${config.model} » a manqué de place avant de terminer (réponse trop longue pour sa mémoire). Réessayez, ou choisissez un modèle plus capable dans Réglages.`);
+      }
+      return result.content;
+    }
     // Coach : on garde la réflexion, mais certains modèles (qwen3.5…) réfléchissent jusqu'à remplir
     // leur contexte sans jamais répondre ; on redemande alors une réponse directe.
-    const reply = await request();
-    return reply.trim() ? reply : request(false);
+    let result = await request();
+    if (!result.content.trim()) result = await request(false);
+    // Réponse coupée faute de place : on le dit plutôt que d'afficher un texte qui s'arrête net
+    return result.truncated
+      ? `${result.content}…
+
+_(Réponse interrompue : le modèle a atteint la limite de sa mémoire. Demandez-lui de continuer, ou cliquez sur « Nouvelle conversation » pour repartir sur une base légère.)_`
+      : result.content;
   },
   async listModels(config) {
     const data = await fetchJson(config, `${baseUrl(config)}/api/tags`, {});

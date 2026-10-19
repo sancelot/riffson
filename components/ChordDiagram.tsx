@@ -9,6 +9,69 @@ const STRING_X = (i: number) => 30 + i * 24;
 const FRET_Y = (fret: number) => 30 + fret * 26;
 const SHOWN_FRETS = 5;
 
+/** Grille de l'accord seule (sans explications), réutilisée par le lecteur de suites d'accords. */
+export const ChordShape: React.FC<{ name: string; highlighted?: boolean; width?: number }> = ({ name, highlighted = false, width = 170 }) => {
+    const frets = CHORD_DEFINITIONS[name];
+    if (!frets) return null;
+    const fingers = CHORD_FINGERS[name] || frets.map(() => 0);
+
+    const uniqueFrets = [...new Set(frets.filter(f => f > 0))].sort((a, b) => a - b);
+    const minFret = uniqueFrets.length > 0 ? uniqueFrets[0] : 0;
+    const stringsWithMinFret = frets.map((f, i) => f === minFret ? i : -1).filter(i => i !== -1);
+
+    // Barré seulement si l'index couvre de la corde jouée la plus grave jusqu'au Mi aigu
+    // et qu'aucune corde n'est à vide (sinon Em, A ou D afficheraient un faux barré)
+    const lowestPlayed = frets.findIndex(f => f !== -1);
+    const isBarre = minFret > 0
+        && stringsWithMinFret.length >= 2
+        && frets[lowestPlayed] === minFret
+        && frets[frets.length - 1] === minFret
+        && !frets.includes(0);
+
+    return (
+        <svg width={width} height={width * 200 / 170} viewBox="0 0 170 200" className="shrink-0">
+            {/* Sillet */}
+            <line x1={STRING_X(0)} y1={FRET_Y(0)} x2={STRING_X(5)} y2={FRET_Y(0)} stroke="white" strokeWidth="5" />
+            {/* Numéros de case */}
+            {Array.from({ length: SHOWN_FRETS }, (_, f) => f + 1).map(f => (
+                <text key={`n-${f}`} x={10} y={FRET_Y(f) - 9} fill="#64748b" fontSize="10" fontFamily="monospace" textAnchor="middle">{f}</text>
+            ))}
+            {/* Cordes */}
+            {STRING_LABELS.map((label, i) => (
+                <g key={`s-${i}`}>
+                    <line x1={STRING_X(i)} y1={FRET_Y(0)} x2={STRING_X(i)} y2={FRET_Y(SHOWN_FRETS)} stroke="#64748b" strokeWidth={2.2 - i * 0.3} />
+                    <text x={STRING_X(i)} y={FRET_Y(SHOWN_FRETS) + 16} fill="#94a3b8" fontSize="10" fontWeight="bold" textAnchor="middle">{label}</text>
+                </g>
+            ))}
+            {/* Frettes */}
+            {Array.from({ length: SHOWN_FRETS }, (_, f) => f + 1).map(f => (
+                <line key={`f-${f}`} x1={STRING_X(0)} y1={FRET_Y(f)} x2={STRING_X(5)} y2={FRET_Y(f)} stroke="#334155" strokeWidth="1.5" />
+            ))}
+
+            {isBarre && (
+                <line
+                    x1={STRING_X(Math.min(...stringsWithMinFret))} y1={FRET_Y(minFret) - 13}
+                    x2={STRING_X(Math.max(...stringsWithMinFret))} y2={FRET_Y(minFret) - 13}
+                    stroke="#f59e0b" strokeWidth="18" strokeLinecap="round" opacity="0.5"
+                />
+            )}
+
+            {frets.map((fret, i) => {
+                const x = STRING_X(i);
+                if (fret === -1) return <text key={`m-${i}`} x={x} y={FRET_Y(0) - 10} textAnchor="middle" fill="#ef4444" fontSize="14" fontWeight="900">✕</text>;
+                if (fret === 0) return <circle key={`o-${i}`} cx={x} cy={FRET_Y(0) - 14} r="6" stroke="#22c55e" strokeWidth="2.5" fill="none" />;
+                const y = FRET_Y(fret) - 13;
+                return (
+                    <g key={`d-${i}`}>
+                        <circle cx={x} cy={y} r={10} fill={highlighted ? '#ffffff' : '#f59e0b'} className="transition-colors duration-200" />
+                        {fingers[i] > 0 && <text x={x} y={y + 4.5} textAnchor="middle" fill="#0f172a" fontSize="13" fontWeight="900">{fingers[i]}</text>}
+                    </g>
+                );
+            })}
+        </svg>
+    );
+};
+
 const ChordDiagram: React.FC<{ chordName: string }> = ({ chordName }) => {
     const name = chordName.replace(/[\[\]]/g, '');
     const frets = CHORD_DEFINITIONS[name];
@@ -30,18 +93,7 @@ const ChordDiagram: React.FC<{ chordName: string }> = ({ chordName }) => {
         setTimeout(() => setIsPlaying(false), 800);
     };
 
-    const uniqueFrets = [...new Set(frets.filter(f => f > 0))].sort((a, b) => a - b);
-    const minFret = uniqueFrets.length > 0 ? uniqueFrets[0] : 0;
-    const stringsWithMinFret = frets.map((f, i) => f === minFret ? i : -1).filter(i => i !== -1);
-
-    // Barré seulement si l'index couvre de la corde jouée la plus grave jusqu'au Mi aigu
-    // et qu'aucune corde n'est à vide (sinon Em, A ou D afficheraient un faux barré)
     const lowestPlayed = frets.findIndex(f => f !== -1);
-    const isBarre = minFret > 0
-        && stringsWithMinFret.length >= 2
-        && frets[lowestPlayed] === minFret
-        && frets[frets.length - 1] === minFret
-        && !frets.includes(0);
 
     // Consignes écrites pour la main gauche, doigt par doigt
     const fingerSteps = frets
@@ -67,46 +119,7 @@ const ChordDiagram: React.FC<{ chordName: string }> = ({ chordName }) => {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-5 items-center">
-                <svg width="170" height="200" viewBox="0 0 170 200" className="shrink-0">
-                    {/* Sillet */}
-                    <line x1={STRING_X(0)} y1={FRET_Y(0)} x2={STRING_X(5)} y2={FRET_Y(0)} stroke="white" strokeWidth="5" />
-                    {/* Numéros de case */}
-                    {Array.from({ length: SHOWN_FRETS }, (_, f) => f + 1).map(f => (
-                        <text key={`n-${f}`} x={10} y={FRET_Y(f) - 9} fill="#64748b" fontSize="10" fontFamily="monospace" textAnchor="middle">{f}</text>
-                    ))}
-                    {/* Cordes */}
-                    {STRING_LABELS.map((label, i) => (
-                        <g key={`s-${i}`}>
-                            <line x1={STRING_X(i)} y1={FRET_Y(0)} x2={STRING_X(i)} y2={FRET_Y(SHOWN_FRETS)} stroke="#64748b" strokeWidth={2.2 - i * 0.3} />
-                            <text x={STRING_X(i)} y={FRET_Y(SHOWN_FRETS) + 16} fill="#94a3b8" fontSize="10" fontWeight="bold" textAnchor="middle">{label}</text>
-                        </g>
-                    ))}
-                    {/* Frettes */}
-                    {Array.from({ length: SHOWN_FRETS }, (_, f) => f + 1).map(f => (
-                        <line key={`f-${f}`} x1={STRING_X(0)} y1={FRET_Y(f)} x2={STRING_X(5)} y2={FRET_Y(f)} stroke="#334155" strokeWidth="1.5" />
-                    ))}
-
-                    {isBarre && (
-                        <line
-                            x1={STRING_X(Math.min(...stringsWithMinFret))} y1={FRET_Y(minFret) - 13}
-                            x2={STRING_X(Math.max(...stringsWithMinFret))} y2={FRET_Y(minFret) - 13}
-                            stroke="#f59e0b" strokeWidth="18" strokeLinecap="round" opacity="0.5"
-                        />
-                    )}
-
-                    {frets.map((fret, i) => {
-                        const x = STRING_X(i);
-                        if (fret === -1) return <text key={`m-${i}`} x={x} y={FRET_Y(0) - 10} textAnchor="middle" fill="#ef4444" fontSize="14" fontWeight="900">✕</text>;
-                        if (fret === 0) return <circle key={`o-${i}`} cx={x} cy={FRET_Y(0) - 14} r="6" stroke="#22c55e" strokeWidth="2.5" fill="none" />;
-                        const y = FRET_Y(fret) - 13;
-                        return (
-                            <g key={`d-${i}`}>
-                                <circle cx={x} cy={y} r={10} fill={isPlaying ? '#ffffff' : '#f59e0b'} className="transition-colors duration-200" />
-                                {fingers[i] > 0 && <text x={x} y={y + 4.5} textAnchor="middle" fill="#0f172a" fontSize="13" fontWeight="900">{fingers[i]}</text>}
-                            </g>
-                        );
-                    })}
-                </svg>
+                <ChordShape name={name} highlighted={isPlaying} />
 
                 <div className="text-sm text-slate-300 space-y-2 w-full">
                     <p className="text-xs font-bold uppercase tracking-widest text-amber-400">Main gauche</p>

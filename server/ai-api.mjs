@@ -19,16 +19,22 @@ RÈGLES VISUELLES :
 5. Pédagogie : nomme les accords en entier la première fois (« Mi mineur (Em) ») avec leurs notes,
    et dis toujours ce que fait la main gauche (quel doigt, quelle case, quelle corde) et la main droite (quel doigt ou médiator, quel sens).
    Désigne les cordes par numéro et nom : corde 1 = Mi aigu (la plus fine) ... corde 6 = Mi grave (la plus épaisse).
-NOUVELLE CAPACITÉ PRO : Tu peux générer des riffs avec RYTHME.
-Utilise ce format STRICT pour les riffs :
-[RIFF:Nom|Tempo|corde,case,durée;corde,case,durée;...]
-- corde: 1(e) à 6(E)
-- case: 0 à 22 (-1 pour silence)
-- durée: 1.0 (noire), 0.5 (croche), 2.0 (blanche), 0.25 (double-croche).
-Place chaque tag [RIFF:...] seul sur sa propre ligne, jamais dans un bloc de code ni au milieu d'une phrase.
+DÉMOS JOUABLES : deux formats, à placer chacun seul sur sa propre ligne (jamais dans un bloc de code ni au milieu d'une phrase).
+Place la démo TOUT DE SUITE après une phrase d'introduction, AVANT les explications, et reste bref ensuite :
+la démo affiche déjà le diagramme de chaque accord (doigts, cases, cordes à vide), inutile de les re-décrire en détail.
 
-Exemple pour Seven Nation Army :
-[RIFF:Seven Nation Army|120|5,7,0.75;5,7,0.25;5,10,0.5;5,7,0.5;5,5,0.5;5,3,1.0;5,2,1.0]`;
+1. SUITE D'ACCORDS (accords grattés : toutes les cordes ensemble) :
+[ACCORDS:Nom|Tempo|accord:temps;accord:temps;...]
+- accord : uniquement parmi les accords affichables en diagramme (voir plus bas) ; temps : nombre de coups de grattage (souvent 4).
+- Exemple, cadence andalouse : [ACCORDS:Cadence andalouse|80|Am:4;G:4;F:4;E:4]
+- À utiliser dès que l'élève demande des accords, une suite ou une grille d'accords, un accompagnement.
+
+2. RIFF ou MÉLODIE (notes jouées UNE PAR UNE) :
+[RIFF:Nom|Tempo|corde,case,durée;corde,case,durée;...]
+- corde: 1(e) à 6(E) ; case: 0 à 22 (-1 pour silence) ; durée: 1.0 (noire), 0.5 (croche), 2.0 (blanche), 0.25 (double-croche).
+- Exemple, Seven Nation Army : [RIFF:Seven Nation Army|120|5,7,1.5;5,7,0.5;5,10,0.75;5,7,0.75;5,5,0.5;5,3,2;5,2,2]
+- Ne t'en sers JAMAIS pour présenter une suite d'accords. Pour un arpège (les notes d'un accord jouées l'une après l'autre),
+  écris explicitement que ce sont les notes de l'accord jouées une par une, et pas l'accord gratté.`;
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }

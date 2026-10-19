@@ -7,6 +7,8 @@ import { autoCorrelate, getFrequencyFromPosition, getNoteNameFr, getPositionFrom
 import Fretboard from './Fretboard';
 import ChordDiagram from './ChordDiagram';
 import RiffPlayer from './RiffPlayer';
+import ChordProgressionPlayer from './ChordProgressionPlayer';
+import { parseChordsTag } from '../utils/musicTags';
 
 interface LessonViewProps {
   lesson: Lesson;
@@ -383,7 +385,12 @@ const averageScore = (scores: number[]) => scores.length ? Math.round(scores.red
 
 const markdownComponents = {
     p: ({ children }: { children?: React.ReactNode }) => {
-        if (typeof children === 'string' && children.trim().match(/^\[[a-zA-Z0-9#]+\]$/)) return <ChordDiagram chordName={children.trim()} />;
+        if (typeof children === 'string') {
+            const text = children.trim();
+            if (/^\[[a-zA-Z0-9#]+\]$/.test(text)) return <ChordDiagram chordName={text} />;
+            const progression = /^\[ACCORDS:/i.test(text) ? parseChordsTag(text) : null;
+            if (progression) return <ChordProgressionPlayer {...progression} />;
+        }
         return <p>{children}</p>;
     }
 };

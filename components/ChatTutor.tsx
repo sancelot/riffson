@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, Bot, Loader2 } from 'lucide-react';
+import { Send, Bot, Loader2, MessageSquarePlus } from 'lucide-react';
 import { ChatMessage, UserProfile, MelodyNote } from '../types';
 import { aiErrorText, sendMessageToAI } from '../services/ai';
 import ReactMarkdown from 'react-markdown';
 import ChordDiagram from './ChordDiagram';
 import RiffPlayer from './RiffPlayer';
+import ChordProgressionPlayer from './ChordProgressionPlayer';
+import { parseChordsTag } from '../utils/musicTags';
 import { CHAT_STORAGE_KEY, readStorage } from '../utils/storage';
 
 interface ChatTutorProps {
@@ -113,6 +115,14 @@ const ChatTutor: React.FC<ChatTutorProps> = ({ user }) => {
             <h2 className="font-black text-white text-lg tracking-tight uppercase italic">Coach Riffson</h2>
             <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest">Prêt à jouer</p>
         </div>
+        {/* Repartir de zéro : l'historique envoyé au modèle redevient léger */}
+        <button
+          onClick={() => setMessages([welcomeMessage(user.name)])}
+          disabled={isLoading || messages.length <= 1}
+          className="ml-auto flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-amber-400 disabled:opacity-40 disabled:hover:text-slate-400 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2"
+        >
+          <MessageSquarePlus size={16} /> Nouvelle conversation
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6 no-scrollbar">
@@ -127,6 +137,10 @@ const ChatTutor: React.FC<ChatTutorProps> = ({ user }) => {
                               if (text.startsWith('[RIFF:')) {
                                   const riffData = parseRiffTag(text);
                                   if (riffData) return <RiffPlayer {...riffData} />;
+                              }
+                              if (/^\[ACCORDS:/i.test(text)) {
+                                  const progression = parseChordsTag(text);
+                                  if (progression) return <ChordProgressionPlayer {...progression} />;
                               }
                               if (text.match(/^\[([a-zA-Z0-9#]+)\]$/)) {
                                   return <ChordDiagram chordName={text} />;
