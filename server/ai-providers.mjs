@@ -7,7 +7,12 @@ import { GoogleGenAI } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
 import { PROVIDERS } from './ai-settings.mjs';
 
-const REQUEST_TIMEOUT_MS = 120_000; // les modèles locaux (Ollama) peuvent être lents
+const CLOUD_TIMEOUT_MS = 120_000;       // services en ligne : réponse complète attendue en 2 min
+const LOCAL_TIMEOUT_MS = 15 * 60_000;   // serveurs compatibles OpenAI locaux (LM Studio…) : lents sur CPU
+// Ollama répond en flux : on attend tant que le modèle produit du texte, quelle que soit la durée totale.
+const OLLAMA_FIRST_CHUNK_TIMEOUT_MS = 5 * 60_000; // chargement du modèle en mémoire + lecture de la consigne
+const OLLAMA_IDLE_TIMEOUT_MS = 2 * 60_000;        // silence maximal entre deux morceaux de réponse
+const OLLAMA_TOTAL_TIMEOUT_MS = 30 * 60_000;      // garde-fou contre une génération qui ne s'arrête jamais
 const MAX_OUTPUT_TOKENS = 16_000;
 
 /** Erreur destinée à l'utilisateur : le message s'affiche tel quel dans l'app. */
@@ -53,17 +58,21 @@ const httpError = (config, status, body) => {
   return new ProviderError(`${who} a répondu ${status}.${detail ? ` Détail : ${detail}` : ''}`);
 };
 
-const fetchJson = async (config, url, init) => {
+const connectionError = (config, url, e) => {
+  const where = new URL(url).origin;
+  if (config.provider === 'ollama') {
+    return new ProviderError(`Ollama ne répond pas sur ${where}. Est-il installé et lancé (commande « ollama serve ») ?`, 503);
+  }
+  return new ProviderError(`Impossible de joindre ${label(config)} (${where}) : ${e?.cause?.code || e?.message || 'erreur réseau'}.`, 503);
+};
+
+const fetchJson = async (config, url, init, timeoutMs = CLOUD_TIMEOUT_MS) => {
   let response;
   try {
-    response = await fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (e) {
-    if (e?.name === 'TimeoutError') throw new ProviderError(`${label(config)} n'a pas répondu en ${REQUEST_TIMEOUT_MS / 1000} s.`, 504);
-    const where = new URL(url).origin;
-    if (config.provider === 'ollama') {
-      throw new ProviderError(`Ollama ne répond pas sur ${where}. Est-il installé et lancé (commande « ollama serve ») ?`, 503);
-    }
-    throw new ProviderError(`Impossible de joindre ${label(config)} (${where}) : ${e?.cause?.code || e?.message || 'erreur réseau'}.`, 503);
+    if (e?.name === 'TimeoutError') throw new ProviderError(`${label(config)} n'a pas répondu en ${Math.round(timeoutMs / 1000)} s.`, 504);
+    throw connectionError(config, url, e);
   }
   const body = await response.text();
   if (!response.ok) throw httpError(config, response.status, body);
@@ -158,7 +167,7 @@ const claudeError = (config, e) => {
 
 const claude = {
   async generate(config, { system, messages, schema, effort }) {
-    const client = new Anthropic({ apiKey: config.apiKey, timeout: REQUEST_TIMEOUT_MS });
+    const client = new Anthropic({ apiKey: config.apiKey, timeout: CLOUD_TIMEOUT_MS });
     const fallback = CLAUDE_FALLBACK_MODELS.includes(config.model);
     try {
       const response = await client.beta.messages.create({
@@ -188,7 +197,7 @@ const claude = {
     }
   },
   async listModels(config) {
-    const client = new Anthropic({ apiKey: config.apiKey, timeout: REQUEST_TIMEOUT_MS });
+    const client = new Anthropic({ apiKey: config.apiKey, timeout: CLOUD_TIMEOUT_MS });
     try {
       const ids = [];
       for await (const model of client.models.list()) ids.push(model.id);
@@ -232,7 +241,7 @@ const openAiStyle = {
         ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
       },
       body: JSON.stringify(body),
-    });
+    }, config.provider === 'openai_compatible' ? LOCAL_TIMEOUT_MS : CLOUD_TIMEOUT_MS);
     const content = data.choices?.[0]?.message?.content;
     return Array.isArray(content) ? content.map(c => c.text || '').join('') : (content || '');
   },
@@ -248,23 +257,78 @@ const openAiStyle = {
 // Ollama (API native, en local)
 // ---------------------------------------------------------------------------
 
+/**
+ * Lit la réponse d'Ollama en flux (une ligne JSON par morceau). On n'abandonne que si le modèle
+ * reste silencieux trop longtemps : une leçon peut prendre plusieurs minutes sur un modèle local,
+ * tant qu'il produit du texte on l'attend.
+ */
+const readOllamaStream = async (config, url, body) => {
+  const controller = new AbortController();
+  let reason = '';
+  let timer;
+  const arm = (ms, why) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { reason = why; controller.abort(); }, ms);
+  };
+  const total = setTimeout(() => { reason = 'total'; controller.abort(); }, OLLAMA_TOTAL_TIMEOUT_MS);
+  arm(OLLAMA_FIRST_CHUNK_TIMEOUT_MS, 'first');
+
+  let content = '';
+  try {
+    let response;
+    try {
+      response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal });
+    } catch (e) {
+      if (controller.signal.aborted) throw e;
+      throw connectionError(config, url, e);
+    }
+    if (!response.ok) throw httpError(config, response.status, await response.text());
+
+    const decoder = new TextDecoder();
+    let buffered = '';
+    for await (const chunk of response.body) {
+      arm(OLLAMA_IDLE_TIMEOUT_MS, 'idle');
+      buffered += decoder.decode(chunk, { stream: true });
+      const lines = buffered.split('\n');
+      buffered = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const part = JSON.parse(line);
+        if (part.error) throw new ProviderError(`Ollama : ${part.error}`);
+        content += part.message?.content || ''; // la réflexion (message.thinking) n'est pas renvoyée à l'élève
+        if (part.done) return content;
+      }
+    }
+    return content;
+  } catch (e) {
+    if (e instanceof ProviderError) throw e;
+    if (controller.signal.aborted) {
+      const minutes = (ms) => `${Math.round(ms / 60_000)} min`;
+      if (reason === 'first') throw new ProviderError(`Ollama n'a commencé à répondre qu'après ${minutes(OLLAMA_FIRST_CHUNK_TIMEOUT_MS)} : le modèle « ${config.model} » est sans doute trop lourd pour cet ordinateur. Essayez un modèle plus petit dans Réglages.`, 504);
+      if (reason === 'idle') throw new ProviderError(`Ollama s'est arrêté de répondre pendant ${minutes(OLLAMA_IDLE_TIMEOUT_MS)} avec le modèle « ${config.model} ».`, 504);
+      throw new ProviderError(`La génération avec « ${config.model} » dépasse ${minutes(OLLAMA_TOTAL_TIMEOUT_MS)}. Essayez un modèle plus petit dans Réglages.`, 504);
+    }
+    throw new ProviderError(`Réponse d'Ollama interrompue : ${e?.message || e}`);
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(total);
+  }
+};
+
 const ollama = {
   async generate(config, { system, messages, schema }) {
-    const data = await fetchJson(config, `${baseUrl(config)}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: config.model,
-        stream: false,
-        // Ollama contraint la sortie sur un JSON Schema passé dans `format`
-        ...(schema ? { format: schema } : {}),
-        messages: [
-          ...(system ? [{ role: 'system', content: system }] : []),
-          ...messages.map(m => ({ role: m.role, content: m.text, ...(m.image ? { images: [m.image.data] } : {}) })),
-        ],
-      }),
+    return readOllamaStream(config, `${baseUrl(config)}/api/chat`, {
+      model: config.model,
+      stream: true,
+      // Ollama contraint la sortie sur un JSON Schema passé dans `format`. Pour ces sorties structurées
+      // (leçons, scanner), la « réflexion » des modèles qui en ont une (qwen3…) allonge la génération
+      // d'environ 25 % sans meilleur résultat : on la coupe. Les modèles sans réflexion ignorent l'option.
+      ...(schema ? { format: schema, think: false } : {}),
+      messages: [
+        ...(system ? [{ role: 'system', content: system }] : []),
+        ...messages.map(m => ({ role: m.role, content: m.text, ...(m.image ? { images: [m.image.data] } : {}) })),
+      ],
     });
-    return data.message?.content || '';
   },
   async listModels(config) {
     const data = await fetchJson(config, `${baseUrl(config)}/api/tags`, {});

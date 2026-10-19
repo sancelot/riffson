@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { UserLevel, UserProfile, Lesson } from '../types';
 import { INITIAL_LESSONS } from '../constants';
 import { aiErrorText, generatePracticeRoutine, generateNextLesson } from '../services/ai';
@@ -15,6 +15,9 @@ interface DashboardProps {
 }
 
 const LEVEL_ORDER = [UserLevel.BEGINNER, UserLevel.INTERMEDIATE, UserLevel.ADVANCED];
+const SLOW_GENERATION_HINT_SEC = 20;
+
+const formatElapsed = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 
 const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson, onChangeLevel }) => {
   // Le parcours affiché est celui du niveau choisi par l'élève
@@ -23,6 +26,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
   const [loadingRoutine, setLoadingRoutine] = useState(false);
   const [isGeneratingLesson, setIsGeneratingLesson] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  // Compteur affiché pendant la génération : avec un modèle local, elle peut durer plusieurs minutes
+  useEffect(() => {
+    if (!isGeneratingLesson) return;
+    const started = Date.now();
+    setElapsedSec(0);
+    const timer = window.setInterval(() => setElapsedSec(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [isGeneratingLesson]);
 
   // Combine Standard Lessons + AI Generated Lessons
   const standardLessons = INITIAL_LESSONS[viewLevel] || [];
@@ -271,7 +284,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectLesson, onAddLesson
                             {isGeneratingLesson ? (
                                 <div className="flex flex-col items-center">
                                     <Loader2 size={32} className="animate-spin text-purple-400 mb-2" />
-                                    <p className="text-purple-300 font-bold animate-pulse">L'IA prépare votre prochain défi...</p>
+                                    <p className="text-purple-300 font-bold animate-pulse">L'IA prépare votre prochain défi... {formatElapsed(elapsedSec)}</p>
+                                    {elapsedSec >= SLOW_GENERATION_HINT_SEC && (
+                                        <p className="text-slate-400 text-xs mt-2 text-center max-w-sm">
+                                            Avec un modèle local (Ollama), une leçon peut prendre plusieurs minutes : restez sur cette page.
+                                        </p>
+                                    )}
                                 </div>
                             ) : (
                                 <>
