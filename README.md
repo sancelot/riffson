@@ -128,6 +128,12 @@ Le serveur (`server/serve.mjs`) sert l'application compilée et l'API IA sur le 
 | `npm start` | Serveur de production (après `build`) |
 | `npm run preview` | Aperçu du build via Vite |
 | `npm run typecheck` | Vérification TypeScript |
+| `npm test` | Tests unitaires (Vitest) |
+
+Les tests du scanner de tablature dessinent leurs propres images (chiffres, polices, petites
+images, notes étouffées…). Pour tester aussi de vraies tablatures sans les publier (elles sont
+protégées par le droit d'auteur), placez-les dans `tests/fixtures/local/` (ignoré par git), chacune
+avec un `.json` du même nom : `{ "notes": [[corde, case, durée], ...] }` (case -1 = note étouffée).
 
 ---
 
@@ -186,7 +192,7 @@ Les contributions sont les bienvenues : nouvelles leçons, corrections musicales
 améliorations de la détection au micro…
 
 1. Forkez le dépôt et créez une branche.
-2. Vérifiez que `npm run typecheck` et `npm run build` passent.
+2. Vérifiez que `npm run typecheck`, `npm test` et `npm run build` passent.
 3. Ouvrez une pull request en décrivant le changement.
 
 Ne commitez jamais de clé API (`.env.local` et `.riffson-ai.json` sont ignorés par git).

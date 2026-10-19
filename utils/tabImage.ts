@@ -16,8 +16,10 @@ export interface TabStaffImage {
 interface Line { y: number; top: number; bottom: number }
 
 const LINE_DARK_RATIO = 0.45;   // part de pixels sombres d'une ligne de portée
-const DARK_LUMINANCE = 150;     // en dessous : pixel considéré comme encre (chiffres)
-const LINE_LUMINANCE = 200;     // lignes de portée et barres : souvent fines et grises (anticrénelage)
+const DARK_LUMINANCE = 150;     // encre des modèles de chiffres (dessinés nets)
+const LINE_CONTRAST = 25;       // lignes et barres : tout ce qui est nettement plus foncé que le papier
+const INK_LEVEL = 0.7;        // seuil de l'encre, entre l'encre (0) et le papier (1)
+                                 // (souvent fines et grises à cause de l'anticrénelage)
 const LINES_PER_TAB_STAFF = 6;
 const ANALYSIS_LINE_GAP_PX = 24; // écart entre lignes visé pour l'analyse (petites images agrandies)
 const MAX_ANALYSIS_ZOOM = 4;
@@ -28,21 +30,44 @@ const DURATIONS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
 
 // --- Image et lignes ---------------------------------------------------------------------------
 
-const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Image illisible'));
-    img.src = src;
-});
+// Accès au dessin (canvas) et au chargement d'images : ceux du navigateur par défaut, remplacés
+// dans les tests par une implémentation Node (@napi-rs/canvas, même API).
+type Drawable = { width: number; height: number };
+type Canvas = Drawable & { getContext(type: '2d', options?: { willReadFrequently?: boolean }): any; toDataURL(type?: string): string };
 
-interface Gray { lum: Uint8Array; width: number; height: number; canvas: HTMLCanvasElement }
+export interface CanvasPlatform {
+    createCanvas(width: number, height: number): Canvas;
+    loadImage(src: string): Promise<Drawable>;
+}
 
-const toGray = (img: HTMLImageElement, zoom: number): Gray => {
+const browserPlatform: CanvasPlatform = {
+    createCanvas: (width, height) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        return canvas;
+    },
+    loadImage: (src) => new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Image illisible'));
+        img.src = src;
+    }),
+};
+
+let platform: CanvasPlatform = browserPlatform;
+
+/** Pour les tests : remplace le canvas du navigateur. */
+export const setCanvasPlatform = (p: CanvasPlatform) => { platform = p; };
+
+const loadImage = (src: string) => platform.loadImage(src);
+
+interface Gray { lum: Uint8Array; darkest: Uint8Array; width: number; height: number; zoom: number; canvas: Canvas; lineThreshold: number; inkThreshold: number; holeThreshold: number; ink: number; paper: number; source?: Gray }
+
+const toGray = (img: Drawable, zoom: number, original?: Gray): Gray => {
     const width = Math.round(img.width * zoom);
     const height = Math.round(img.height * zoom);
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+    const canvas = platform.createCanvas(width, height);
     const ctx = canvas.getContext('2d')!;
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, width, height);
@@ -50,17 +75,40 @@ const toGray = (img: HTMLImageElement, zoom: number): Gray => {
     ctx.drawImage(img, 0, 0, width, height);
     const rgba = ctx.getImageData(0, 0, width, height).data;
     const lum = new Uint8Array(width * height);
-    for (let i = 0; i < lum.length; i++) lum[i] = rgba[i * 4] * 0.3 + rgba[i * 4 + 1] * 0.59 + rgba[i * 4 + 2] * 0.11;
-    return { lum, width, height, canvas };
+    // (et la composante la plus sombre : sur un texte minuscule lissé par sous-pixels (ClearType),
+    // un trait fin n'existe que sous forme de pixels colorés pâles)
+    const darkest = new Uint8Array(width * height);
+    for (let i = 0; i < lum.length; i++) {
+        lum[i] = rgba[i * 4] * 0.3 + rgba[i * 4 + 1] * 0.59 + rgba[i * 4 + 2] * 0.11;
+        darkest[i] = Math.min(rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]);
+    }
+    // Couleur du papier : la plupart des pixels (on prend un centile clair, robuste au texte et aux lignes).
+    // Sur une image agrandie, le flou étale les lignes : on garde la couleur mesurée sur l'originale.
+    const histogram = new Uint32Array(256);
+    for (let i = 0; i < lum.length; i += 7) histogram[lum[i]]++;
+    let seen = 0, paper = 255;
+    const sampled = Math.ceil(lum.length / 7);
+    for (let v = 0; v < 256; v++) { seen += histogram[v]; if (seen >= sampled * 0.2) { paper = v; break; } }
+    if (original) paper = original.paper;
+    // Encre la plus foncée (en ignorant les quelques pixels les plus noirs) : sur une petite image agrandie,
+    // les chiffres deviennent gris. Le seuil « encre » est assez clair pour garder les traits fins
+    // (déliés des polices à empattements) ; il est resserré par portée si les lignes sont grises.
+    let dark = 0, ink = 0;
+    for (let v = 0; v < 256; v++) { dark += histogram[v]; if (dark >= sampled * 0.002) { ink = v; break; } }
+    const inkThreshold = Math.min(paper - 30, Math.max(100, Math.round(ink + (paper - ink) * INK_LEVEL)));
+    // Trous des boucles (0, 6, 8, 9) : sur un petit chiffre agrandi ils restent grisés, on les cherche
+    // avec un seuil plus strict que celui de l'encre
+    const holeThreshold = Math.min(inkThreshold, Math.round(ink + (paper - ink) * 0.3));
+    return { lum, darkest, width, height, zoom, canvas, lineThreshold: Math.max(100, paper - LINE_CONTRAST), inkThreshold, holeThreshold, ink, paper };
 };
 
 /** Lignes horizontales longues (centre et épaisseur). */
-const findHorizontalLines = ({ lum, width, height }: Gray): Line[] => {
+const findHorizontalLines = ({ lum, width, height, lineThreshold }: Gray): Line[] => {
     const lines: Line[] = [];
     let runStart = -1;
     for (let y = 0; y <= height; y++) {
         let dark = 0;
-        if (y < height) for (let x = 0; x < width; x += 2) if (lum[y * width + x] < LINE_LUMINANCE) dark++;
+        if (y < height) for (let x = 0; x < width; x += 2) if (lum[y * width + x] < lineThreshold) dark++;
         const isLine = y < height && dark / (width / 2) > LINE_DARK_RATIO;
         if (isLine && runStart < 0) runStart = y;
         if (!isLine && runStart >= 0) {
@@ -103,13 +151,18 @@ const analyse = async (dataUrl: string) => {
     if (firstStaves.length === 0) return { gray: first, staves: firstStaves };
     const zoom = Math.min(MAX_ANALYSIS_ZOOM, MAX_WORK_WIDTH / img.width, Math.max(1, ANALYSIS_LINE_GAP_PX / staffGap(firstStaves[0])));
     if (zoom <= 1.05) return { gray: first, staves: firstStaves };
-    const gray = toGray(img, zoom);
+    // (l'image d'origine reste disponible : les chiffres minuscules s'y lisent mieux qu'agrandis)
+    const gray = { ...toGray(img, zoom, first), source: first };
     return { gray, staves: groupTabStaves(findHorizontalLines(gray)) };
 };
 
 // --- Reconnaissance des chiffres -----------------------------------------------------------------
 
 const GRID = 16;
+/** Signes lus en plus des chiffres : x = note étouffée (jouée sans son). Trait de glissé : voir isSlideMark. */
+const MUTED = -1, SLIDE = -2;
+const TEMPLATE_SIGNS: [string, number][] = [...'0123456789'].map(c => [c, Number(c)] as [string, number])
+    .concat([['x', MUTED], ['X', MUTED]]);
 const TEMPLATE_FONTS = ['Arial', 'Helvetica', 'Verdana', 'Tahoma', 'Times New Roman', 'Georgia', 'Courier New'];
 
 /** Met un glyphe (masque binaire) à l'échelle d'une grille carrée, hauteur pleine, proportions gardées. */
@@ -171,19 +224,17 @@ const digitTemplates = (glyphHeight: number): Template[] => {
     if (cached) return cached;
     const templates: Template[] = [];
     const canvasSize = size * 3;
-    const c = document.createElement('canvas');
-    c.width = canvasSize;
-    c.height = canvasSize;
+    const c = platform.createCanvas(canvasSize, canvasSize);
     const ctx = c.getContext('2d', { willReadFrequently: true })!;
     for (const font of TEMPLATE_FONTS) {
         for (const weight of ['normal', 'bold']) {
-            for (let digit = 0; digit <= 9; digit++) {
+            for (const [sign, digit] of TEMPLATE_SIGNS) {
                 ctx.fillStyle = '#fff';
                 ctx.fillRect(0, 0, canvasSize, canvasSize);
                 ctx.fillStyle = '#000';
                 ctx.font = `${weight} ${Math.round(size / 0.72)}px "${font}"`; // les chiffres font ~72 % du corps
                 ctx.textBaseline = 'middle';
-                ctx.fillText(String(digit), size * 0.5, canvasSize / 2);
+                ctx.fillText(sign, size * 0.5, canvasSize / 2);
                 const px = ctx.getImageData(0, 0, canvasSize, canvasSize).data;
                 const ink = (x: number, y: number) => px[(y * canvasSize + x) * 4] < DARK_LUMINANCE;
                 let minX = canvasSize, maxX = -1, minY = canvasSize, maxY = -1;
@@ -207,26 +258,34 @@ const rowsCenter = (grid: Float32Array, fromRow: number, toRow: number): number 
     return weight ? sum / weight : GRID / 2;
 };
 
+/** Largeur (part de la grille) occupée par l'encre sur un groupe de rangées. */
+const rowsExtent = (grid: Float32Array, fromRow: number, toRow: number): number => {
+    let first = GRID, last = -1;
+    for (let y = fromRow; y < toRow; y++) for (let x = 0; x < GRID; x++) if (grid[y * GRID + x] >= 0.5) { first = Math.min(first, x); last = Math.max(last, x); }
+    return last < 0 ? 0 : (last - first + 1) / GRID;
+};
+
 const TIE_MARGIN = 0.06;
+const TINY_GAP_PX = 10;
+const TINY_DIGIT_PX = 10; // hauteur (dans l'image d'origine) en dessous de laquelle un trou peut disparaître
 
-// Chiffres à boucle fermée (le 4 dépend de la police : il est permis dans les deux cas)
-const DIGITS_WITH_LOOP = [0, 4, 6, 8, 9];
-const DIGITS_WITHOUT_LOOP = [1, 2, 3, 4, 5, 7];
+/** Boucles (zones blanches entièrement entourées d'encre) d'un glyphe : nombre, position et taille. */
+interface Loops { count: number; centerY: number; height: number } // centre et hauteur relatifs à la hauteur du glyphe
 
-/** Nombre de « trous » (zones blanches entièrement entourées d'encre) d'un glyphe. */
-const countLoops = (ink: (x: number, y: number) => boolean, w: number, h: number): number => {
+const findLoops = (ink: (x: number, y: number) => boolean, w: number, h: number): Loops => {
     // Grille bordée d'une marge blanche : tout le blanc relié au bord est l'extérieur
     const W = w + 2, H = h + 2;
     const filled = new Uint8Array(W * H);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (ink(x, y)) filled[(y + 1) * W + x + 1] = 1;
     const visit = (start: number) => {
-        let size = 0;
+        let size = 0, minY = H, maxY = 0;
         const stack = [start];
         filled[start] = 2;
         while (stack.length) {
             const p = stack.pop()!;
             size++;
             const x = p % W, y = (p - x) / W;
+            minY = Math.min(minY, y); maxY = Math.max(maxY, y);
             for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                 const nx = x + dx, ny = y + dy;
                 if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
@@ -234,17 +293,55 @@ const countLoops = (ink: (x: number, y: number) => boolean, w: number, h: number
                 if (filled[q] === 0) { filled[q] = 2; stack.push(q); }
             }
         }
-        return size;
+        return { size, minY: minY - 1, maxY: maxY - 1 };
     };
     visit(0);
-    let loops = 0;
-    for (let p = 0; p < filled.length; p++) if (filled[p] === 0 && visit(p) >= 3) loops++;
-    return loops;
+    const loops: { minY: number, maxY: number }[] = [];
+    for (let p = 0; p < filled.length; p++) {
+        if (filled[p] !== 0) continue;
+        const hole = visit(p);
+        if (hole.size >= 3) loops.push(hole);
+    }
+    if (loops.length !== 1) return { count: loops.length, centerY: 0.5, height: 0 };
+    return { count: 1, centerY: (loops[0].minY + loops[0].maxY + 1) / 2 / h, height: (loops[0].maxY - loops[0].minY + 1) / h };
 };
 
-const classifyDigit = (grid: Float32Array, aspect: number, glyphHeight: number, loops: number): number => {
+/**
+ * Chiffres compatibles avec les boucles observées : 8 en a deux ; le 6 a une boucle en bas, le 0 une
+ * grande boucle, le 9 et le 4 (fermé) une petite boucle en haut ou au milieu ; les autres n'en ont pas.
+ * Sur un chiffre minuscule (quelques pixels dans l'image d'origine), le petit trou du haut du 8 peut être bouché.
+ */
+const digitsForLoops = ({ count, centerY, height }: Loops, tiny: boolean): number[] => {
+    if (count >= 2) return [8];
+    if (count === 0) return [1, 2, 3, 4, 5, 7, MUTED];
+    if (centerY > 0.58) return tiny ? [6, 8] : [6]; // (boucle du haut du 8, la plus petite, bouchée)
+    if (height > 0.45 && centerY >= 0.42) return [0];
+    return [4, 9];
+};
+
+/**
+ * Trait de glissé (/ ou ) : un simple trait oblique. Chaque rangée n'a qu'un court tronçon d'encre,
+ * qui se déplace régulièrement d'un bord à l'autre (un x a deux tronçons écartés en haut et en bas).
+ */
+const isSlideMark = (ink: (x: number, y: number) => boolean, w: number, h: number): boolean => {
+    const centers: number[] = [];
+    let extents = 0;
+    for (let y = 0; y < h; y++) {
+        let first = -1, last = -1;
+        for (let x = 0; x < w; x++) if (ink(x, y)) { if (first < 0) first = x; last = x; }
+        if (first < 0) continue;
+        centers.push((first + last) / 2);
+        extents += last - first + 1;
+    }
+    if (centers.length < h * 0.8 || extents / centers.length > w * 0.45) return false;
+    const drift = centers[centers.length - 1] - centers[0];
+    if (Math.abs(drift) < w * 0.5) return false;
+    // Toujours dans le même sens (à un pixel près)
+    return centers.every((c, i) => i === 0 || (c - centers[i - 1]) * Math.sign(drift) >= -1);
+};
+
+const classifyDigit = (grid: Float32Array, aspect: number, glyphHeight: number, allowed: number[]): number => {
     const soft = blur(grid);
-    const allowed = loops > 0 ? DIGITS_WITH_LOOP : DIGITS_WITHOUT_LOOP;
     const perDigit = new Map<number, number>();
     for (const t of digitTemplates(glyphHeight)) {
         if (!allowed.includes(t.digit)) continue;
@@ -252,7 +349,9 @@ const classifyDigit = (grid: Float32Array, aspect: number, glyphHeight: number, 
         const score = correlation(soft, t.grid) - Math.abs(Math.log(aspect / t.aspect)) * 0.3;
         perDigit.set(t.digit, Math.max(perDigit.get(t.digit) ?? -Infinity, score));
     }
-    const ranked = [...perDigit.entries()].sort((a, b) => b[1] - a[1]);
+    let ranked = [...perDigit.entries()].sort((a, b) => b[1] - a[1]);
+    // Le 2 se termine par une barre horizontale : sans elle (bas étroit), c'est un 7 ou un 1
+    if (ranked[0][0] === 2 && ranked.length > 1 && rowsExtent(grid, GRID - 2, GRID) < 0.5) ranked = ranked.slice(1);
     let best = { digit: ranked[0][0], score: ranked[0][1] };
     // Petits chiffres flous : 1 et 7 se ressemblent. La hampe du 7 penche vers la gauche
     // (son bas est à gauche de sa barre du haut), celle du 1 est droite.
@@ -264,18 +363,129 @@ const classifyDigit = (grid: Float32Array, aspect: number, glyphHeight: number, 
     return best.digit;
 };
 
+// --- Chiffres minuscules ------------------------------------------------------------------------
+
+/**
+ * Un chiffre de quelques pixels de haut, une fois agrandi, n'est plus qu'une tache : on le compare
+ * en niveaux de gris, à sa taille d'origine, aux signes dessinés à cette même taille par le navigateur
+ * (avec le même anticrénelage), à plusieurs décalages sous le pixel.
+ */
+interface Patch { w: number; h: number; dark: Float32Array }
+interface TinyTemplate extends Patch { digit: number }
+const tinyCache = new Map<number, TinyTemplate[]>();
+
+/** Rogne une carte d'encre (0 = papier, 1 = encre) à l'encre visible. */
+const cropPatch = (dark: (x: number, y: number) => number, w: number, h: number): Patch | null => {
+    let minX = w, maxX = -1, minY = h, maxY = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (dark(x, y) > 0.25) {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }
+    if (maxX < 0) return null;
+    const pw = maxX - minX + 1, ph = maxY - minY + 1;
+    const out = new Float32Array(pw * ph);
+    for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) out[y * pw + x] = dark(minX + x, minY + y);
+    return { w: pw, h: ph, dark: out };
+};
+
+const tinyTemplates = (height: number): TinyTemplate[] => {
+    const cached = tinyCache.get(height);
+    if (cached) return cached;
+    const templates: TinyTemplate[] = [];
+    const size = height * 4 + 8;
+    const c = platform.createCanvas(size, size);
+    const ctx = c.getContext('2d', { willReadFrequently: true })!;
+    for (const font of TEMPLATE_FONTS) for (const weight of ['normal', 'bold']) {
+        // (un chiffre fait ~72 % du corps de la police, un x minuscule ~52 %)
+        for (let px = Math.floor((height - 1) / 0.72); px <= Math.ceil((height + 1) / 0.52); px++) {
+            for (const [sign, digit] of TEMPLATE_SIGNS) for (const dx of [0, 1 / 3, 2 / 3]) for (const dy of [0, 1 / 3, 2 / 3]) {
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, size, size);
+                ctx.fillStyle = '#000';
+                ctx.font = `${weight} ${px}px "${font}"`;
+                ctx.textBaseline = 'middle';
+                ctx.fillText(sign, 4 + dx, size / 2 + dy);
+                const data = ctx.getImageData(0, 0, size, size).data;
+                const patch = cropPatch((x, y) => 1 - data[(y * size + x) * 4 + 1] / 255, size, size);
+                if (patch && Math.abs(patch.h - height) <= 1) templates.push({ ...patch, digit });
+            }
+        }
+    }
+    tinyCache.set(height, templates);
+    return templates;
+};
+
+/** Ressemblance de deux cartes d'encre, au meilleur recalage (±1 pixel). */
+const patchSimilarity = (a: Patch, b: Patch): number => {
+    const W = Math.max(a.w, b.w) + 2, H = Math.max(a.h, b.h) + 2;
+    let best = -1;
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+        let sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+            const ax = x - 1, ay = y - 1, bx = x - 1 - ox, by = y - 1 - oy;
+            const va = ax >= 0 && ax < a.w && ay >= 0 && ay < a.h ? a.dark[ay * a.w + ax] : 0;
+            const vb = bx >= 0 && bx < b.w && by >= 0 && by < b.h ? b.dark[by * b.w + bx] : 0;
+            sa += va; sb += vb; saa += va * va; sbb += vb * vb; sab += va * vb;
+        }
+        const n = W * H;
+        const cov = sab - sa * sb / n, da = saa - sa * sa / n, db = sbb - sb * sb / n;
+        if (da > 0 && db > 0) best = Math.max(best, cov / Math.sqrt(da * db));
+    }
+    return best;
+};
+
+const classifyTiny = (patch: Patch): number => {
+    let best = { digit: -1, score: -Infinity };
+    for (const t of tinyTemplates(patch.h)) {
+        const score = patchSimilarity(patch, t);
+        if (score > best.score) best = { digit: t.digit, score };
+    }
+    return best.digit;
+};
+
 // --- Lecture d'une portée -------------------------------------------------------------------------
 
 interface Glyph { x0: number; x1: number; y0: number; y1: number; string: number; digit: number }
 interface TabNote { x: number; string: number; fret: number }
 
-const readStaff = ({ lum, width }: Gray, staff: Line[]): { notes: TabNote[]; bars: number[]; gap: number } => {
+const readStaff = (gray: Gray, staff: Line[]): { notes: TabNote[]; bars: number[]; gap: number } => {
+    const { lum, width } = gray;
     const gap = staffGap(staff);
     const top = Math.max(0, Math.floor(staff[0].y - gap * 0.6));
     const bottom = Math.ceil(staff[LINES_PER_TAB_STAFF - 1].y + gap * 0.6);
     const h = bottom - top;
+    // Lignes grises plus claires que les chiffres : le seuil de l'encre passe juste sous leur teinte,
+    // pour qu'un chiffre traversé par une ligne (sans fond blanc) s'en distingue
+    const lineShades: number[] = [];
+    for (const line of staff) for (let x = 0; x < width; x += 3) {
+        let darkest = 255;
+        for (let y = line.top; y <= line.bottom; y++) darkest = Math.min(darkest, lum[y * width + x]);
+        if (darkest < gray.lineThreshold) lineShades.push(darkest);
+    }
+    lineShades.sort((a, b) => a - b);
+    const lineShade = lineShades.length ? lineShades[Math.floor(lineShades.length / 2)] : 0;
+    const range = gray.paper - gray.ink;
+    const inkThreshold = lineShade > gray.ink + range * 0.3 && lineShade < gray.inkThreshold + 10
+        ? Math.min(gray.inkThreshold, Math.max(Math.round(gray.ink + range / 2), lineShade - 8))
+        : gray.inkThreshold;
+    // Portée minuscule (image d'origine) : les chiffres se lisent dans l'image d'origine, voir classifyTiny
+    const source = gray.source;
+    const tinyStaff = !!source && gap / gray.zoom * source.zoom < TINY_GAP_PX;
+    const nativePatch = (x0: number, y0: number, gw: number, gh: number, pixel: (x: number, y: number) => boolean): Patch | null => {
+        const s = source!, k = s.zoom / gray.zoom;
+        const nx0 = Math.floor(x0 * k), ny0 = Math.floor((y0 + top) * k);
+        const nx1 = Math.ceil((x0 + gw) * k), ny1 = Math.ceil((y0 + top + gh) * k);
+        const range = s.paper - s.ink;
+        // Seulement là où le chiffre a de l'encre (ni ligne de portée, ni voisin)
+        return cropPatch((x, y) => {
+            const sx = nx0 + x, sy = ny0 + y;
+            const ax = Math.floor((sx + 0.5) / k) - x0, ay = Math.floor((sy + 0.5) / k) - y0 - top;
+            if (ax < 0 || ay < 0 || ax >= gw || ay >= gh || !pixel(ax, ay)) return 0;
+            return Math.max(0, Math.min(1, (s.paper - s.lum[sy * s.width + sx]) / range));
+        }, nx1 - nx0, ny1 - ny0);
+    };
     const ink = new Uint8Array(width * h);
-    for (let y = 0; y < h; y++) for (let x = 0; x < width; x++) ink[y * width + x] = lum[(y + top) * width + x] < DARK_LUMINANCE ? 1 : 0;
+    const inkLum = tinyStaff ? gray.darkest : lum;
+    for (let y = 0; y < h; y++) for (let x = 0; x < width; x++) ink[y * width + x] = inkLum[(y + top) * width + x] < inkThreshold ? 1 : 0;
     const at = (x: number, y: number) => (x >= 0 && x < width && y >= 0 && y < h ? ink[y * width + x] : 0);
 
     // Barres de mesure : colonnes encrées sur toute la hauteur de la portée
@@ -284,7 +494,7 @@ const readStaff = ({ lum, width }: Gray, staff: Line[]): { notes: TabNote[]; bar
     // (seuil des lignes : les barres sont souvent aussi fines et grises que les lignes de portée)
     const columnDark = (x: number) => {
         let dark = 0;
-        for (let y = lineTop; y <= lineBottom; y++) if (lum[(y + top) * width + x] < LINE_LUMINANCE) dark++;
+        for (let y = lineTop; y <= lineBottom; y++) if (lum[(y + top) * width + x] < gray.lineThreshold) dark++;
         return dark / (lineBottom - lineTop + 1);
     };
     const barColumns: number[] = [];
@@ -310,9 +520,26 @@ const readStaff = ({ lum, width }: Gray, staff: Line[]): { notes: TabNote[]; bar
     // Effacement des lignes de portée, sauf là où un trait vertical de chiffre les traverse.
     // Un trait oblique (le 2, le 7…) peut être coupé : les morceaux sont recollés plus bas.
     const lineBands = staff.map(line => ({ t: line.top - top - 1, b: line.bottom - top + 1 }));
+    // Seuls les longs tracés horizontaux sont de la ligne : un trait de chiffre posé sur la ligne
+    // (haut de la boucle du 6, taille du 8) est court et doit rester, sinon la boucle s'ouvre.
+    const minLineRun = gap * 1.2;
+    const lineRun = new Uint8Array(width);
     for (const { t, b } of lineBands) {
+        lineRun.fill(0);
+        for (let y = t + 1; y < b; y++) {
+            if (y < 0 || y >= h) continue;
+            let start = -1;
+            for (let x = 0; x <= width; x++) {
+                const on = x < width && ink[y * width + x] === 1;
+                if (on && start < 0) start = x;
+                if (!on && start >= 0) {
+                    if (x - start >= minLineRun) for (let k = start; k < x; k++) lineRun[k] = 1;
+                    start = -1;
+                }
+            }
+        }
         for (let x = 0; x < width; x++) {
-            if (at(x, t) && at(x, b)) continue;
+            if (!lineRun[x] || (at(x, t) && at(x, b))) continue;
             for (let y = t + 1; y < b; y++) if (y >= 0 && y < h) ink[y * width + x] = 0;
         }
     }
@@ -361,6 +588,24 @@ const readStaff = ({ lum, width }: Gray, staff: Line[]): { notes: TabNote[]; bar
         }
     }
 
+    // Portée minuscule : les chiffres d'un nombre (10, 12…) se touchent par leurs bords flous.
+    // Un glyphe trop large est coupé à sa colonne la plus creuse, si elle l'est nettement.
+    if (tinyStaff) {
+        for (let i = parts.length - 1; i >= 0; i--) {
+            const part = parts[i];
+            const gw = part.x1 - part.x0 + 1, gh = part.y1 - part.y0 + 1;
+            if (gw <= gh || gw > gap * 2.5 || gh < gap * 0.45) continue;
+            const column = (x: number) => { let n = 0; for (let y = part.y0; y <= part.y1; y++) n += at(x, y); return n; };
+            const counts = Array.from({ length: gw }, (_, k) => column(part.x0 + k));
+            let cut = -1;
+            for (let k = Math.round(gw * 0.3); k <= Math.round(gw * 0.7); k++) if (cut < 0 || counts[k] < counts[cut]) cut = k;
+            if (counts[cut] > Math.max(...counts) * 0.25) continue;
+            const left = { ...part, x1: part.x0 + cut - 1, count: Math.round(part.count * cut / gw) };
+            const right = { ...part, x0: part.x0 + cut + 1, count: part.count - left.count };
+            parts.splice(i, 1, left, right);
+        }
+    }
+
     const glyphs: Glyph[] = [];
     for (const { x0, x1, y0, y1, count, rejoined } of parts) {
         const gh = y1 - y0 + 1, gw = x1 - x0 + 1;
@@ -374,16 +619,30 @@ const readStaff = ({ lum, width }: Gray, staff: Line[]): { notes: TabNote[]; bar
         if (Math.abs(staff[nearest].y - cy) > gap * 0.4) continue; // signe de mesure (4/4), texte…
         // Chiffre recollé : on le lit dans la copie intacte (sinon il lui manque la rangée de la ligne)
         const pixel = (x: number, y: number) => (rejoined ? intactAt(x0 + x, y0 + y) : at(x0 + x, y0 + y)) === 1;
-        glyphs.push({ x0, x1, y0, y1, string: nearest + 1, digit: classifyDigit(normalize(pixel, gw, gh), gw / gh, gh, countLoops(pixel, gw, gh)) });
+        // Boucles. Sur un chiffre minuscule agrandi, tout est flou : on les cherche d'abord avec le seuil
+        // strict (un trou grisé compte comme un trou, la queue d'un 9 qui frôle sa boucle ne la ferme pas),
+        // puis avec le seuil normal s'il n'en voit aucune (traits pâles).
+        const tiny = gh / gray.zoom < TINY_DIGIT_PX;
+        const solid = (x: number, y: number) => pixel(x, y) && lum[(y0 + y + top) * width + x0 + x] < gray.holeThreshold;
+        const strictLoops = tiny ? findLoops(solid, gw, gh) : { count: 0, centerY: 0.5, height: 0 };
+        const loops = strictLoops.count > 0 ? strictLoops : findLoops(pixel, gw, gh);
+        const digit = isSlideMark(pixel, gw, gh) ? SLIDE
+            : tinyStaff ? classifyTiny(nativePatch(x0, y0, gw, gh, pixel) ?? { w: 1, h: 1, dark: new Float32Array(1) })
+            : classifyDigit(normalize(pixel, gw, gh), gw / gh, gh, digitsForLoops(loops, tiny));
+        if (digit !== SLIDE) glyphs.push({ x0, x1, y0, y1, string: nearest + 1, digit });
     }
 
     // Chiffres voisins sur la même corde = un nombre (10, 12…)
     glyphs.sort((a, b) => a.string - b.string || a.x0 - b.x0);
     const notes: TabNote[] = [];
     for (let i = 0; i < glyphs.length; i++) {
+        if (glyphs[i].digit === MUTED) {
+            notes.push({ x: (glyphs[i].x0 + glyphs[i].x1) / 2, string: glyphs[i].string, fret: MUTED });
+            continue;
+        }
         let fret = String(glyphs[i].digit);
         let x1 = glyphs[i].x1;
-        while (i + 1 < glyphs.length && glyphs[i + 1].string === glyphs[i].string && glyphs[i + 1].x0 - x1 < gap * 0.35) {
+        while (i + 1 < glyphs.length && glyphs[i + 1].string === glyphs[i].string && glyphs[i + 1].digit >= 0 && glyphs[i + 1].x0 - x1 < gap * 0.35) {
             i++;
             fret += glyphs[i].digit;
             x1 = glyphs[i].x1;
@@ -451,9 +710,7 @@ export async function splitTabStaves(dataUrl: string): Promise<TabStaffImage[]> 
         const bottom = Math.min(height, Math.ceil(lines[LINES_PER_TAB_STAFF - 1].y + gap * 3));
         const zoom = Math.min(MAX_ANALYSIS_ZOOM, Math.max(1, TARGET_LINE_GAP_PX / gap));
 
-        const out = document.createElement('canvas');
-        out.width = Math.round(width * zoom) + LABEL_MARGIN_PX;
-        out.height = Math.round((bottom - top) * zoom);
+        const out = platform.createCanvas(Math.round(width * zoom) + LABEL_MARGIN_PX, Math.round((bottom - top) * zoom));
         const o = out.getContext('2d')!;
         o.fillStyle = '#fff';
         o.fillRect(0, 0, out.width, out.height);

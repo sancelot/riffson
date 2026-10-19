@@ -26,3 +26,6 @@ dist-ssr
 # Réglages IA (clés API) enregistrés par l'onglet Réglages (et leur ancien nom)
 .riffson-ai.json
 .gibson-ai.json
+
+# Images de tablatures réelles pour les tests (protégées par le droit d'auteur : jamais dans le dépôt)
+tests/fixtures/local/
